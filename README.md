@@ -1,80 +1,114 @@
 # 🏥 PhysioCare Pro
 
-> A Modern Digital Physiotherapy Management Platform
+> **Complete Digital Healthcare & Physiotherapy Management Platform**
 
 ---
 
 ## 📖 Overview
 
-PhysioCare Pro is a complete healthcare management platform designed for physiotherapy clinics.
+PhysioCare Pro is a modern digital healthcare platform designed to simplify clinic operations and improve patient experience.
 
-The platform enables patients to book clinic appointments, home visits, and online consultations while providing doctors, receptionists, and administrators with dedicated portals to efficiently manage daily operations.
+The platform enables patients to book physiotherapy appointments, laboratory tests, home visits, and online consultations while providing dedicated portals for doctors, receptionists, laboratory technicians, and administrators.
 
-The project is designed with scalability in mind and serves as the foundation for future AI-powered healthcare automation.
+The system is built using a scalable architecture that allows future expansion into AI-powered healthcare services.
 
 ---
 
-# ✨ Features
+# 🌟 Key Features
 
-## 👨‍⚕️ Patient Portal
+## 👤 Patient Portal
 
 - Patient Registration & Login
-- Profile Management
-- Book Clinic Appointment
-- Book Home Visit (Premium)
-- Book Online Consultation
+- Dashboard
+- Clinic Appointment Booking
+- Home Visit Booking
+- Online Consultation Booking
+- Laboratory Test Booking
+- Home Sample Collection
 - Appointment History
-- Subscription Management
+- Medical Records
+- Prescriptions
+- Exercise Plans
+- Laboratory Reports
+- Online Payments
+- Pay at Clinic
 - Notifications
 
 ---
 
-## 🩺 Doctor Portal
+## 👨‍⚕️ Doctor Portal
 
-- Doctor Dashboard
-- Today's Appointments
-- Home Visit Schedule
-- Online Consultation Schedule
-- Patient Details
-- Medical Notes
+- Dashboard
+- Appointment Management
+- Patient Medical History
+- Upload Prescriptions
+- Upload Exercise Plans
+- Recommend Laboratory Tests
+- View Laboratory Reports
 - Availability Management
 
 ---
 
-## 🏢 Reception Portal
+## 🧪 Laboratory Portal
 
-- Walk-in Patient Registration
-- Appointment Queue
-- Patient Search
-- Check-in Patients
-- Payment Management
+- Laboratory Dashboard
+- Test Catalogue
+- Home Sample Collection
+- Assigned Bookings
+- Upload Laboratory Reports
+- Booking Status
+- Health Package Management
+
+---
+
+## 🏥 Reception Portal
+
+- Register Walk-in Patients
+- Book Appointments
+- Book Laboratory Tests
+- Queue Management
+- Payment Collection
+- Schedule Management
+- Patient Check-In
 
 ---
 
 ## ⚙️ Admin Portal
 
 - Dashboard
-- Doctor Management
-- Patient Management
-- Appointment Management
-- Subscription Management
+- Manage Doctors
+- Manage Patients
+- Manage Receptionists
+- Manage Laboratory Technicians
+- Manage Appointments
+- Manage Laboratory Tests
+- Manage Health Packages
 - Reports & Analytics
 - Website Management
 
 ---
 
-## 🚀 Future AI Features
+# 💳 Payment Options
 
-- AI Receptionist
-- Voice Appointment Booking
-- AI Chat Assistant
-- AI Follow-up System
-- AI Appointment Recommendations
-- AI Analytics Dashboard
+- Online Payment
+- Pay at Clinic
+- Payment History
+- Invoice Management
 
 ---
 
-# 🛠 Tech Stack
+# 🔔 Notifications
+
+- Appointment Confirmation
+- Appointment Reminder
+- Payment Confirmation
+- Laboratory Report Ready
+- Email Notifications
+- WhatsApp Notifications (Future)
+
+---
+
+# 🛠 Technology Stack
 
 ## Frontend
 
@@ -84,8 +118,8 @@ The project is designed with scalability in mind and serves as the foundation fo
 
 ## Backend
 
-- Python
 - FastAPI
+- Python
 
 ## Database
 
@@ -104,60 +138,64 @@ The project is designed with scalability in mind and serves as the foundation fo
 
 # 📂 Project Structure
 
-```
-PhysioCare-Pro/
+```text
+PhysioCare/
 
-apps/
+├── apps/
+│   ├── patient-web/
+│   ├── doctor-portal/
+│   ├── reception-portal/
+│   ├── admin-portal/
+│   └── lab-portal/
 │
-├── patient-web/
-├── doctor-portal/
-├── admin-portal/
-├── reception-portal/
-
-backend/
-
-shared/
-
-database/
-
-docs/
-
-assets/
+├── backend/
+├── database/
+├── docs/
+├── api/
+├── scripts/
+├── shared/
+└── .github/
 ```
 
 ---
 
-# 📌 Development Roadmap
+# 🚀 Development Roadmap
 
 - [x] Project Planning
-- [ ] Patient Website
-- [ ] Authentication
-- [ ] Appointment Booking
+- [x] GitHub Setup
+- [ ] Database Design
+- [ ] API Design
+- [ ] Backend Development
+- [ ] Patient Portal
 - [ ] Doctor Portal
 - [ ] Reception Portal
+- [ ] Laboratory Module
 - [ ] Admin Portal
-- [ ] Home Visit Module
-- [ ] Online Consultation
-- [ ] Notifications
+- [ ] Integration
+- [ ] Testing
 - [ ] Deployment
-- [ ] AI Integration
 
 ---
 
-# 🤝 Contributors
+# 🔮 Future Enhancements
 
-- **Vignesh Reddy V** — Project Lead & Backend Developer
-
-(Add other contributors as they join.)
-
----
-
-# 📅 Project Status
-
-🚧 Currently Under Development
+- AI Receptionist
+- Voice AI
+- WhatsApp Booking
+- AI Health Assistant
+- Multi-Clinic Support
+- Mobile Applications
 
 ---
 
-## ⭐ Vision
+# 👥 Team
 
-To build a scalable digital healthcare platform that simplifies clinic management while laying the foundation for AI-powered healthcare services.
+**Project Lead**
+
+Vignesh Reddy V
+
+---
+
+# 📄 License
+
+This project is currently under development.
