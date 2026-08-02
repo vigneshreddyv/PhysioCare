@@ -63,6 +63,21 @@ The project is designed with scalability in mind and serves as the foundation fo
 
 ---
 
+# Laboratory Portal
+
+This application is the dedicated portal for laboratory technicians.
+
+## Responsibilities
+
+- View Assigned Sample Collections
+- Update Collection Status
+- Upload Laboratory Reports
+- Manage Daily Schedule
+
+Status: Under Development
+
+---
+
 ## 🚀 Future AI Features
 
 - AI Receptionist
