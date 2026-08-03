@@ -1,0 +1,49 @@
+@import 'react-day-picker/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    background-color: theme('colors.background');
+    color: theme('colors.on-surface');
+    font-family: 'Inter', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Custom scrollbar for horizontal scrolling elements */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* react-day-picker customization to match Stitch styling */
+.rdp {
+  --rdp-cell-size: 40px;
+  --rdp-accent-color: #006184; /* theme('colors.primary') */
+  --rdp-background-color: #c4e7ff; /* theme('colors.primary-fixed') */
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+}
+
+.rdp-day_selected, .rdp-day_selected:hover {
+  background-color: #006184 !important; /* theme('colors.primary') */
+  color: #ffffff !important; /* theme('colors.on-primary') */
+  border-radius: 9999px;
+}
+
+.rdp-day:hover:not(.rdp-day_selected):not(.rdp-day_disabled) {
+  background-color: #eef4ff !important; /* theme('colors.surface-container-low') */
+  border-radius: 9999px;
+}
+
+.rdp-day_today {
+  font-weight: bold;
+  border: 1px solid #006184;
+  border-radius: 9999px;
+}
