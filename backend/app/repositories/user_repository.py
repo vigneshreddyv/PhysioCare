@@ -1,14 +1,19 @@
 from typing import Optional
+
+from beanie import PydanticObjectId
+
 from app.models.user import User
 
+
 class UserRepository:
+
     @staticmethod
     async def get_by_email(email: str) -> Optional[User]:
         return await User.find_one(User.email == email)
 
     @staticmethod
     async def get_by_id(id: str) -> Optional[User]:
-        return await User.get(id)
+        return await User.get(PydanticObjectId(id))
 
     @staticmethod
     async def create(user: User) -> User:

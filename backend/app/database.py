@@ -21,19 +21,6 @@ async def init_db():
             User,
             Patient,
             Doctor,
-            Appointment
-        ]
-    )
-async def init_db():
-
-    client = BeanieCompatibleMotorClient(settings.MONGODB_URL)
-
-    await init_beanie(
-        database=client[settings.DATABASE_NAME],
-        document_models=[
-            User,
-            Patient,
-            Doctor,
             Appointment,
-        ],
+        ]
     )
