@@ -7,14 +7,14 @@ from app.services.appointment_service import AppointmentService
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
-@router.post("/", response_model=AppointmentOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AppointmentOut, status_code=status.HTTP_201_CREATED)
 async def create_appointment(
     schema: AppointmentCreate,
     current_user: User = Depends(RoleChecker(["patient"]))
 ):
     return await AppointmentService.create_appointment(str(current_user.id), schema)
 
-@router.get("/", response_model=List[AppointmentOut])
+@router.get("", response_model=List[AppointmentOut])
 async def list_appointments(
     current_user: User = Depends(get_current_user)
 ):
