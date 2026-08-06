@@ -79,11 +79,12 @@ export default function PatientDashboard() {
             />
             <StatCard
               title="Primary Therapist"
-              value={primaryDoc.split(' ').pop()} // last name
+              value={primaryDoc}
               icon="stethoscope"
-              changeText={primaryDoc}
+              changeText="Assigned"
               changeType="flat"
               colorVariant="tertiary"
+              wrapText={true}
             />
           </>
         )}

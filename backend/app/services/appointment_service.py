@@ -132,6 +132,7 @@ class AppointmentService:
             patient_name=patient_user.full_name,
             doctor_id=str(doctor.id),
             doctor_name=doctor_user.full_name,
+            specialization=doctor.specialization,
             appointment_date=a.appointment_date,
             time_slot=a.time_slot,
             reason=a.reason,

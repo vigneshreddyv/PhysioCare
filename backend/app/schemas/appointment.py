@@ -19,6 +19,7 @@ class AppointmentOut(BaseModel):
     patient_name: str
     doctor_id: str
     doctor_name: str
+    specialization: Optional[str] = None
     appointment_date: datetime
     time_slot: str
     reason: str

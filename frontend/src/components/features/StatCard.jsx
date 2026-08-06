@@ -15,6 +15,7 @@ export default function StatCard({
   elevation = true, // Whether to apply shadow/elevation
   fullWidth = false, // Whether card should stretch to full width
   compact = false, // Compact version for tighter spaces
+  wrapText = false, // Whether to allow text wrapping for title and value
 }) {
   // Enhanced color variants for healthcare dashboard
   const iconBgs = {
@@ -82,13 +83,13 @@ export default function StatCard({
               <span className="material-symbols-outlined">{icon}</span>
             </div>
           )}
-          <h3 className={`font-medium text-sm text-muted flex-1 truncate`}>
+          <h3 className={`font-medium text-sm text-muted flex-1 ${wrapText ? 'max-w-xs' : 'truncate'}`}>
             {title}
           </h3>
         </div>
 
         {/* Main Value */}
-        <div className={`${selectedValueSize} text-primary mb-2 font-numbers`}>
+        <div className={`${selectedValueSize} text-primary mb-2 font-numbers${wrapText ? ' break-words whitespace-normal max-w-full' : ''}`}>
           {value}
         </div>
 

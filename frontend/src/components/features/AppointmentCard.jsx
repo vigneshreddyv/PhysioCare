@@ -10,8 +10,7 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
     time_slot,
     reason,
     status,
-    specialty,
-    duration
+    specialization
   } = appointment;
 
   // Format date (date-only) and use time_slot for time
@@ -21,25 +20,29 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
 
   // Status colors and labels
   const statusConfig = {
-    completed: { color: 'green-100', text: 'green-800', label: 'Completed', icon: 'check_circle' },
-    'in_progress': { color: 'yellow-100', text: 'yellow-800', label: 'In Progress', icon: 'pause_circle_filled' },
-    scheduled: { color: 'blue-100', text: 'blue-800', label: 'Scheduled', icon: 'event_available' },
-    cancelled: { color: 'red-100', text: 'red-800', label: 'Cancelled', icon: 'cancel' },
-    no_show: { color: 'gray-100', text: 'gray-800', label: 'No Show', icon: 'person_off' }
+    completed: { color: 'green-100', text: 'green-800', label: 'Completed', icon: 'check_circle', bgClass: 'bg-green-100/30' },
+    'in_progress': { color: 'yellow-100', text: 'yellow-800', label: 'In Progress', icon: 'pause_circle_filled', bgClass: 'bg-yellow-100/30' },
+    scheduled: { color: 'blue-100', text: 'blue-800', label: 'Scheduled', icon: 'event_available', bgClass: 'bg-blue-100/30' },
+    cancelled: { color: 'red-100', text: 'red-800', label: 'Cancelled', icon: 'cancel', bgClass: 'bg-red-100/30' },
+    no_show: { color: 'gray-100', text: 'gray-800', label: 'No Show', icon: 'person_off', bgClass: 'bg-gray-100/30' }
   };
 
   const statusInfo = statusConfig[status] || statusConfig.scheduled;
 
   // Specialty mapping with icons
   const specialties = {
-    'Physical Therapy': { icon: 'fitness_center', color: 'blue' },
-    'Sports Massage': { icon: 'spa', color: 'green' },
-    'Chiropractic': { icon: 'chiropractor', color: 'purple' },
-    'Acupuncture': { icon: 'acupuncture', color: 'indigo' },
-    'Massage Therapy': { icon: 'massage', color: 'teal' }
+    'Physical Therapy': { icon: 'fitness_center', color: 'blue', bgClass: 'bg-blue-500' },
+    'Sports Massage': { icon: 'spa', color: 'green', bgClass: 'bg-green-500' },
+    'Chiropractic': { icon: 'chiropractor', color: 'purple', bgClass: 'bg-purple-500' },
+    'Acupuncture': { icon: 'acupuncture', color: 'indigo', bgClass: 'bg-indigo-500' },
+    'Massage Therapy': { icon: 'massage', color: 'teal', bgClass: 'bg-teal-500' }
   };
 
-  const specialtyInfo = specialties[specialty] || { icon: 'local_hospital', color: 'gray' };
+  const specialtyInfo = specialties[specialization] || {
+  icon: 'local_hospital',
+  color: 'gray',
+  bgClass: 'bg-gray-500'
+};
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-300 cursor-pointer">
@@ -49,21 +52,29 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
           {/* Patient avatar with initials */}
           <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
             <span className="text-blue-600 font-bold text-lg">
-              {patient_name.split(' ')[0][0]}{patient_name.split(' ')[1]?.[0] || ''}
+              {String(patient_name).split(' ')[0][0]}{String(patient_name).split(' ')[1]?.[0] || ''}
             </span>
           </div>
           <div>
-            <p className="font-semibold text-gray-900">{patient_name}</p>
-            <p className="text-sm text-gray-500">
-              {displayRole === 'patient' ? `Dr. ${doctor_name}` : `Pat: ${patient_name.substring(0, 15)}...`}
-            </p>
+            {displayRole === 'patient' ? (
+              <>
+                <p className="font-semibold text-gray-900">{doctor_name}</p>
+                {specialization && (
+                  <p className="text-sm text-gray-500">
+                    {specialization}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="font-semibold text-gray-900">{patient_name}</p>
+            )}
           </div>
         </div>
         <div className="text-center">
           <span
-            className={`px-3 py-1 rounded-full text-xs font-medium ${
-              statusInfo.color
-            } bg-${statusInfo.color}/20`}
+            className={`px-3 py-2 rounded-full text-sm font-medium ${
+              statusInfo.text
+            } ${statusInfo.bgClass}`}
           >
             {statusInfo.label}
           </span>
@@ -80,7 +91,7 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
           </div>
           <div className="flex items-center space-x-2">
             <span className="material-symbols-outlined w-4 h-4 text-gray-400">access_time</span>
-            <span>{time_slot} - {duration} min</span>
+            <span>{time_slot}</span>
           </div>
           <div className="flex items-center space-x-2">
             <span className="material-symbols-outlined w-4 h-4 text-gray-400">stethoscope</span>
@@ -88,8 +99,10 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
           </div>
           <div className="flex items-center space-x-2">
             <span className={`flex items-center space-x-1`}>
-              <span className={`w-2 h-2 rounded-full bg-${specialtyInfo.color}-500`} />
-              <span className="text-xs font-medium">{specialty}</span>
+              <span className={`w-2 h-2 rounded-full ${specialtyInfo.bgClass}`} />
+              <span className="text-xs font-medium">
+                {specialization || 'Specialty'}
+              </span>
             </span>
           </div>
         </div>
