@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../context/useAuth';
+import { useNavigate } from 'react-router-dom';
 
 export default function Navbar({ onMenuToggle }) {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   // Avatar placeholder if no image exists
@@ -31,7 +33,7 @@ export default function Navbar({ onMenuToggle }) {
 
       {/* Right Side: Quick Links & Avatar */}
       <div className="flex items-center gap-2 relative">
-        <button className="p-2 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-highest/50 dark:hover:bg-surface-variant/50 rounded-full transition-all">
+        <button onClick={() => navigate('/notifications')} className="p-2 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-highest/50 dark:hover:bg-surface-variant/50 rounded-full transition-all">
           <span className="material-symbols-outlined">notifications</span>
         </button>
         <button className="p-2 text-on-surface-variant dark:text-outline-variant hover:bg-surface-container-highest/50 dark:hover:bg-surface-variant/50 rounded-full transition-all">

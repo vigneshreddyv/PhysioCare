@@ -10,7 +10,7 @@ import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 
-export default function BookAppointment() {
+export default function AdminAppointmentBooking() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -20,15 +20,15 @@ export default function BookAppointment() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTime, setSelectedTime] = useState('');
   const [reason, setReason] = useState('');
-  
+
   // Confirmation modal state
   const [modalOpen, setModalOpen] = useState(false);
 
   // Fetch doctors
-  const { 
-    data: doctors, 
-    isLoading: loadingDoctors, 
-    error: doctorsError 
+  const {
+    data: doctors,
+    isLoading: loadingDoctors,
+    error: doctorsError
   } = useQuery({
     queryKey: ['bookingDoctors'],
     queryFn: async () => {
@@ -37,25 +37,18 @@ export default function BookAppointment() {
     }
   });
 
-// Mutation to book appointment
-const bookMutation = useMutation({
-  mutationFn: async (appointmentData) => {
-    const response = await api.post("/appointments", appointmentData);
-    return response.data;
-  },
-
-  onSuccess: () => {
-    queryClient.invalidateQueries({
-      queryKey: ["appointments"],
-    });
-
-    setModalOpen(true);
-  },
-
-  onError: (err) => {
-    console.error("Failed to book appointment:", err.response?.data || err.message);
-  },
-});
+  // Mutation to book appointment
+  const bookMutation = useMutation({
+    mutationFn: async (appointmentData) => {
+      const response = await api.post('/appointments', appointmentData);
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] });
+      queryClient.invalidateQueries({ queryKey: ['adminStats'] });
+      setModalOpen(true);
+    }
+  });
 
   const handleDoctorSelect = (doc) => {
     setSelectedDoctor(doc);
@@ -88,7 +81,7 @@ const bookMutation = useMutation({
 
   const handleModalClose = () => {
     setModalOpen(false);
-    navigate('/patient/dashboard');
+    navigate('/admin/dashboard');
   };
 
   if (doctorsError) {
@@ -110,7 +103,7 @@ const bookMutation = useMutation({
 
   return (
     <div className="flex flex-col gap-stack-lg max-w-xl mx-auto animate-fade-in pb-16">
-      
+
       {/* Stepper Progress bar */}
       <div className="flex items-center justify-between w-full max-w-sm mx-auto mb-6">
         <div className="flex flex-col items-center gap-1">
@@ -119,10 +112,10 @@ const bookMutation = useMutation({
           }`}>1</div>
           <span className={`font-label-sm text-label-sm ${step >= 1 ? 'text-primary font-bold' : 'text-on-surface-variant'}`}>Specialist</span>
         </div>
-        <div className={`flex-1 h-[2px] mx-2 ${step >= 2 ? 'bg-primary' : 'bg-primary-fixed'}`}></div>
-        
+        <div className={`flex-1 h-[2px] mx-2 ${step >= 2 ? 'bg-primary' : 'bg-surface-variant'}`}></div>
+
         <div className="flex flex-col items-center gap-1">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-label-md text-label-md ${
+          <div className={`w-8 h-8 rounded-flex flex items-center justify-center font-label-md text-label-md ${
             step >= 2 ? 'bg-primary text-on-primary font-bold' : 'bg-surface-variant text-on-surface-variant'
           }`}>2</div>
           <span className={`font-label-sm text-label-sm ${step >= 2 ? 'text-primary font-bold' : 'text-on-surface-variant'}`}>Date</span>
@@ -130,16 +123,18 @@ const bookMutation = useMutation({
         <div className={`flex-1 h-[2px] mx-2 ${step >= 3 ? 'bg-primary' : 'bg-surface-variant'}`}></div>
 
         <div className="flex flex-col items-center gap-1">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-label-md text-label-md ${
+          <div className={`w-8 h-8 rounded-flex flex items-center justify-center font-label-md text-label-md ${
             step >= 4 ? 'bg-primary text-on-primary font-bold' : 'bg-surface-variant text-on-surface-variant'
           }`}>3</div>
-          <span className={`font-label-sm text-label-sm ${step >= 4 ? 'text-primary font-bold' : 'text-on-surface-variant'}`}>Details</span>
+          <span className={`font-label-sm text-label-sm ${step >= 4 ? 'text-primary font-bold' : 'text-on-surface-variant'}${
+            step === 4 ? ' font-bold' : ''
+          }`}>Details</span>
         </div>
       </div>
 
       <div className="text-center">
-        <h1 className="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg mb-2">Book your appointment</h1>
-        <p className="font-body-md text-body-md text-on-surface-variant">Select a specialist and time that works for you.</p>
+        <h1 className="font-headline-lg-mobile text-headline-lg-mobile md:font-headline-lg md:text-headline-lg mb-2">Book Appointment</h1>
+        <p className="font-body-md text-body-md text-on-surface-variant">Select a specialist and time that works for the patient.</p>
       </div>
 
       {/* STEP 1: Select Specialist */}
@@ -151,7 +146,7 @@ const bookMutation = useMutation({
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-gutter">
-            {doctors?.map((doc) => (
+            {Array.isArray(doctors) && doctors.map((doc) => (
               <DoctorCard
                 key={doc.id}
                 doctor={doc}
@@ -196,7 +191,7 @@ const bookMutation = useMutation({
                   type="button"
                   onClick={() => handleTimeSelect(time)}
                   className={`py-3 px-4 rounded-full border text-center font-label-md text-label-md transition-all duration-200 ${
-                    isSelected 
+                    isSelected
                       ? 'border-2 border-primary bg-primary-fixed text-on-primary-container font-semibold shadow-sm'
                       : 'border-outline-variant bg-surface-container-lowest text-on-surface hover:border-primary hover:text-primary'
                   }`}
@@ -215,7 +210,7 @@ const bookMutation = useMutation({
           <h2 className="font-headline-md text-headline-md">4. Reason for Visit</h2>
           <div className="flex flex-col gap-2">
             <label className="font-label-md text-label-md text-on-surface-variant" htmlFor="reason">
-              Briefly describe your symptoms or goal.
+              Briefly describe the patient's symptoms or goal.
             </label>
             <textarea
               id="reason"
@@ -249,10 +244,10 @@ const bookMutation = useMutation({
             <span className="material-symbols-outlined" style={{ fontSize: '32px', fontVariationSettings: "'FILL' 1" }}>check_circle</span>
           </div>
           <div>
-            <h4 className="font-bold text-lg text-on-surface">Your visit is scheduled!</h4>
-            <p className="text-sm text-on-surface-variant mt-1">We look forward to helping you feel your best.</p>
+            <h4 className="font-bold text-lg text-on-surface">Appointment scheduled successfully!</h4>
+            <p className="text-sm text-on-surface-variant mt-1">The appointment has been added to the calendar.</p>
           </div>
-          
+
           <div className="bg-surface-container-low rounded-xl p-4 text-left text-sm space-y-2 border border-surface-container">
             <div className="flex justify-between">
               <span className="font-semibold text-on-surface-variant">Specialist:</span>
@@ -273,7 +268,6 @@ const bookMutation = useMutation({
           </Button>
         </div>
       </Modal>
-
     </div>
   );
 }

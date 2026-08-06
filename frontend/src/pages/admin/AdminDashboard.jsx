@@ -1,11 +1,9 @@
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
-import StatCard from '../../components/features/StatCard';
-import AppointmentCard from '../../components/features/AppointmentCard';
-import Skeleton from '../../components/common/Skeleton';
+import { DashboardHeader, DashboardStats, DashboardCharts, RecentAppointments, RecentActivity } from './dashboard';
 import ErrorState from '../../components/common/ErrorState';
-import EmptyState from '../../components/common/EmptyState';
+import subDays from 'date-fns/subDays';
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
@@ -68,107 +66,83 @@ export default function AdminDashboard() {
     );
   }
 
-  const appointmentsToday = appointments?.length ?? 0;
+  // Generate meaningful notifications from available data
+  const notifications = [];
+
+  // Add notification for new appointments today
+  const today = new Date();
+  const yesterday = subDays(today, 1);
+  const todayAppointments = appointments?.filter(apt => {
+    const aptDate = new Date(apt.appointment_date);
+    return aptDate.toDateString() === today.toDateString();
+  })?.length || 0;
+
+  const yesterdayAppointments = appointments?.filter(apt => {
+    const aptDate = new Date(apt.appointment_date);
+    return aptDate.toDateString() === yesterday.toDateString();
+  })?.length || 0;
+
+  if (todayAppointments > 0) {
+    const change = todayAppointments - yesterdayAppointments;
+    if (change > 0) {
+      notifications.push({
+        id: `today-appointments-${Date.now()}`,
+        type: 'success',
+        title: 'More appointments today',
+        message: `${todayAppointments} appointments today, which is ${change} more than yesterday.`,
+        time: 'Today',
+      });
+    } else if (change < 0) {
+      notifications.push({
+        id: `today-appointments-${Date.now()}`,
+        type: 'warning',
+        title: 'Fewer appointments today',
+        message: `${todayAppointments} appointments today, which is ${Math.abs(change)} fewer than yesterday.`,
+        time: 'Today',
+      });
+    }
+  }
+
+  // Add notification for new patients
+  const newPatients = stats?.new_patients || 0;
+  if (newPatients > 0) {
+    notifications.push({
+      id: `new-patients-${Date.now()}`,
+      type: 'info',
+      title: 'New patients registered',
+      message: `${newPatients} new patients registered this week.`,
+      time: 'This week',
+    });
+  }
 
   return (
-    <div className="space-y-stack-lg animate-fade-in">
-
-      <div className="mb-stack-lg">
-        <h2 className="font-headline-lg text-headline-lg font-semibold text-on-surface">
-          Overview
-        </h2>
-
-        <p className="font-body-md text-body-md text-on-surface-variant mt-1">
-          Here's what's happening at your clinic today.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-gutter mb-12">
-
-        {statsLoading ? (
-          <Skeleton variant="card" count={4} />
-        ) : (
-          <>
-            <StatCard
-              title="Appointments Today"
-              value={appointmentsToday}
-              icon="calendar_today"
-              changeText="+4 from yesterday"
-              changeType="up"
-              colorVariant="primary"
-            />
-
-            <StatCard
-              title="Active Subscriptions"
-              value={stats?.active_subscriptions ?? 0}
-              icon="card_membership"
-              changeText="Currently Active"
-              changeType="flat"
-              colorVariant="secondary"
-            />
-
-            <StatCard
-              title="Total Doctors"
-              value={stats?.total_doctors ?? 0}
-              icon="stethoscope"
-              changeText="Registered Doctors"
-              changeType="flat"
-              colorVariant="tertiary"
-            />
-
-            <StatCard
-              title="Revenue"
-              value={`$${stats?.total_revenue?.toLocaleString() ?? 0}`}
-              icon="payments"
-              changeText="+8.4% vs last month"
-              changeType="up"
-              colorVariant="primary"
-            />
-          </>
-        )}
-      </div>
-
-      <div className="bg-surface-container-lowest rounded-xl shadow-sm border border-surface-container p-6">
-
-        <div className="flex justify-between items-center mb-6 border-b border-surface-container-high pb-4">
-          <h3 className="font-headline-md text-headline-md">
-            Recent Appointments
-          </h3>
-
-          <button
-            onClick={() => refetchAppointments()}
-            className="text-primary hover:underline flex items-center gap-1"
-          >
-            <span className="material-symbols-outlined text-sm">
-              refresh
-            </span>
-
-            Refresh List
-          </button>
-        </div>
-
-        {appointmentsLoading ? (
-          <Skeleton variant="row" count={3} />
-        ) : !appointments || appointments.length === 0 ? (
-          <EmptyState
-            title="No appointments"
-            message="No appointments found."
-            icon="calendar_today"
+    <>
+      <DashboardHeader
+        date={new Date()}
+        notifications={notifications}
+      />
+      <div className="grid gap-6">
+        <DashboardStats
+          stats={stats}
+          appointments={appointments}
+        />
+        <DashboardCharts
+          stats={stats}
+          statsLoading={statsLoading}
+          appointments={appointments}
+        />
+    <div className="grid gap-6 md:grid-cols-2">
+          <RecentAppointments
+            appointments={appointments}
+            appointmentsLoading={appointmentsLoading}
+            refetchAppointments={refetchAppointments}
+            onStatusChange={handleStatusChange}
           />
-        ) : (
-          <div className="space-y-4">
-            {appointments.map((appointment) => (
-              <AppointmentCard
-                key={appointment.id}
-                appointment={appointment}
-                displayRole="admin"
-                onStatusChange={handleStatusChange}
-              />
-            ))}
-          </div>
-        )}
+          <RecentActivity
+            notifications={notifications}
+          />
+        </div>
       </div>
-
-    </div>
+    </>
   );
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useEffect } from 'react';
 import api from '../services/api';
 
 const AuthContext = createContext(null);
@@ -12,7 +12,7 @@ export function AuthProvider({ children }) {
       const response = await api.get('/auth/me');
       setUser(response.data);
     } catch (error) {
-      // Token is invalid, clear tokens
+      // Token is invalid, clear session
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       setUser(null);
@@ -23,17 +23,19 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const token = localStorage.getItem('access_token');
+
     if (token) {
       fetchUserProfile();
     } else {
       setLoading(false);
     }
 
-    // Bind interceptor logout events
     const handleGlobalLogout = () => {
       setUser(null);
     };
+
     window.addEventListener('auth_logout', handleGlobalLogout);
+
     return () => {
       window.removeEventListener('auth_logout', handleGlobalLogout);
     };
@@ -41,18 +43,44 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     setLoading(true);
+
     try {
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+      });
+
       const { access_token, refresh_token } = response.data;
-      
+
       localStorage.setItem('access_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
-      
+
       await fetchUserProfile();
+
       return true;
     } catch (error) {
       setLoading(false);
-      throw error.response?.data?.detail || 'Authentication failed';
+
+      if (error.response) {
+        let errorMessage = 'Authentication failed';
+
+        if (error.response.data) {
+          errorMessage =
+            error.response.data.detail ||
+            error.response.data.message ||
+            error.response.data.error ||
+            error.response.data?.errors?.[0]?.message ||
+            'Authentication failed';
+        }
+
+        throw errorMessage;
+      }
+
+      if (error.request) {
+        throw 'Network error - please check if the backend server is running.';
+      }
+
+      throw error.message || 'An unexpected error occurred.';
     }
   };
 
@@ -77,10 +105,4 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-}
+export { AuthContext };

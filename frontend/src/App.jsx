@@ -1,7 +1,8 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthContext';
+import { useAuth } from './context/useAuth';
 import { ThemeProvider } from './context/ThemeContext';
 
 // Import layouts
@@ -34,6 +35,11 @@ import DoctorsList from './pages/admin/DoctorsList';
 import Analytics from './pages/admin/Analytics';
 import Billing from './pages/admin/Billing';
 import Settings from './pages/admin/Settings';
+import AppointmentBooking from './pages/admin/AppointmentBooking';
+import Notifications from './pages/admin/Notifications';
+import AdminPatientEdit from './pages/admin/AdminPatientEdit';
+import AdminPatientHistory from './pages/admin/AdminPatientHistory';
+import PatientsCreate from './pages/admin/PatientsCreate';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -71,14 +77,20 @@ export default function App() {
               <Route path="/login" element={<Login />} />
 
               {/* Home redirect based on logged-in role */}
-              <Route 
-                path="/" 
+              <Route
+                path="/"
                 element={
                   <ProtectedRoute>
                     <HomeRedirect />
                   </ProtectedRoute>
-                } 
+                }
               />
+              {/* Notifications route (accessible to all authenticated users) */}
+              <Route path="/notifications" element={
+                <ProtectedRoute>
+                  <Notifications />
+                </ProtectedRoute>
+              } />
 
               {/* Patient Routes */}
               <Route
@@ -127,10 +139,14 @@ export default function App() {
               >
                 <Route path="dashboard" element={<AdminDashboard />} />
                 <Route path="patients" element={<PatientsList />} />
+                <Route path="patients-create" element={<PatientsCreate />} />
+                <Route path="patients-edit/:id" element={<AdminPatientEdit />} />
+                <Route path="patients-history/:id" element={<AdminPatientHistory />} />
                 <Route path="doctors" element={<DoctorsList />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="billing" element={<Billing />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="appointment-booking" element={<AppointmentBooking />} />
               </Route>
 
               {/* 404 Fallback */}
