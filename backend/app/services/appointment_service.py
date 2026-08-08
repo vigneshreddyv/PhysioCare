@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import HTTPException, status
 from typing import List
 
@@ -15,7 +16,11 @@ from app.schemas.appointment import (
 class AppointmentService:
 
     @staticmethod
-    async def create_appointment(user_id: str, schema: AppointmentCreate) -> AppointmentOut:
+    async def create_appointment(
+        user_id: str,
+        schema: AppointmentCreate,
+    ) -> AppointmentOut:
+
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
 
         if not patient:
@@ -30,6 +35,39 @@ class AppointmentService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Doctor not found",
+            )
+
+    # Prevent booking appointments in the past
+        if schema.appointment_date < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Appointment date must be in the future",
+            )
+
+    # Doctor availability
+        doctor_busy = await AppointmentRepository.doctor_has_slot(
+            str(doctor.id),
+            schema.appointment_date,
+            schema.time_slot,
+        )
+
+        if doctor_busy:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Doctor is not available for the selected time slot",
+            )
+
+    # Patient availability
+        patient_busy = await AppointmentRepository.patient_has_slot(
+            str(patient.id),
+            schema.appointment_date,
+            schema.time_slot,
+        )
+
+        if patient_busy:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You already have an appointment at this time",
             )
 
         appointment = Appointment(
