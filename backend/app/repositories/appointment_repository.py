@@ -49,3 +49,33 @@ class AppointmentRepository:
             Appointment.appointment_date >= start_of_day,
             Appointment.appointment_date <= end_of_day,
         ).to_list()
+
+    @staticmethod
+    async def doctor_has_slot(
+        doctor_id: str,
+        appointment_date: datetime,
+        time_slot: str,
+    ) -> bool:
+        appointment = await Appointment.find_one(
+            Appointment.doctor_id == PydanticObjectId(doctor_id),
+            Appointment.appointment_date == appointment_date,
+            Appointment.time_slot == time_slot,
+            Appointment.status != "cancelled",
+        )
+
+        return appointment is not None
+
+    @staticmethod
+    async def patient_has_slot(
+        patient_id: str,
+        appointment_date: datetime,
+        time_slot: str,
+    ) -> bool:
+        appointment = await Appointment.find_one(
+            Appointment.patient_id == PydanticObjectId(patient_id),
+            Appointment.appointment_date == appointment_date,
+            Appointment.time_slot == time_slot,
+            Appointment.status != "cancelled",
+        )
+
+        return appointment is not None
