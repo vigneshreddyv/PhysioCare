@@ -73,9 +73,19 @@ class AppointmentService:
         appointment = Appointment(
             patient_id=patient.id,
             doctor_id=doctor.id,
+            service_type=schema.service_type,
             appointment_date=schema.appointment_date,
             time_slot=schema.time_slot,
             reason=schema.reason,
+            symptoms=schema.symptoms,
+            duration_days=schema.duration_days,
+            pain_level=schema.pain_level,
+            visit_address=schema.visit_address,
+            status="approved",
+            billing_status="pending",
+            billing_amount=120.0,
+            payment_method=schema.payment_method,
+            payment_status="pending",
         )
 
         saved = await AppointmentRepository.create(appointment)
@@ -166,16 +176,37 @@ class AppointmentService:
 
         return AppointmentOut(
             id=str(a.id),
+
             patient_id=str(patient.id),
             patient_name=patient_user.full_name,
+
             doctor_id=str(doctor.id),
             doctor_name=doctor_user.full_name,
             specialization=doctor.specialization,
+
+            service_type=a.service_type,
+
             appointment_date=a.appointment_date,
             time_slot=a.time_slot,
+
             reason=a.reason,
+            symptoms=a.symptoms,
+            duration_days=a.duration_days,
+            pain_level=a.pain_level,
+
+            visit_address=a.visit_address,
+
             status=a.status,
+
             billing_status=a.billing_status,
             billing_amount=a.billing_amount,
+
+            payment_method=a.payment_method,
+            payment_status=a.payment_status,
+            payment_id=a.payment_id,
+
+            feedback_rating=a.feedback_rating,
+            feedback_comment=a.feedback_comment,
+
             created_at=a.created_at,
         )

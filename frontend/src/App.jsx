@@ -4,6 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { useAuth } from './context/useAuth';
 import { ThemeProvider } from './context/ThemeContext';
+import Register from './pages/common/Register';
+
+
 
 // Import layouts
 import PatientLayout from './layouts/PatientLayout';
@@ -20,9 +23,11 @@ import NotFound from './pages/common/NotFound';
 
 // Patient pages
 import PatientDashboard from './pages/patient/PatientDashboard';
+import ServiceSelection from './pages/patient/ServiceSelection';
 import BookAppointment from './pages/patient/BookAppointment';
 import PatientHistory from './pages/patient/PatientHistory';
 import PatientProfile from './pages/patient/PatientProfile';
+
 
 // Doctor pages
 import DoctorDashboard from './pages/doctor/DoctorDashboard';
@@ -58,7 +63,7 @@ function HomeRedirect() {
   }
 
   const routes = {
-    patient: '/patient/dashboard',
+    patient: '/patient/services',
     doctor: '/doctor/dashboard',
     admin: '/admin/dashboard',
   };
@@ -73,8 +78,10 @@ export default function App() {
         <AuthProvider>
           <BrowserRouter>
             <Routes>
-              {/* Public route */}
+              {/* Public authentication routes */}
               <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              
 
               {/* Home redirect based on logged-in role */}
               <Route
@@ -103,6 +110,7 @@ export default function App() {
                   </ProtectedRoute>
                 }
               >
+                <Route path="services" element={<ServiceSelection />} />
                 <Route path="dashboard" element={<PatientDashboard />} />
                 <Route path="book" element={<BookAppointment />} />
                 <Route path="history" element={<PatientHistory />} />

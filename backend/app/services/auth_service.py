@@ -36,28 +36,17 @@ class AuthService:
         user = User(
             email=schema.email,
             hashed_password=hashed,
-            role=schema.role,
+            role="patient",
             full_name=schema.full_name,
         )
 
         saved_user = await UserRepository.create(user)
 
-        if schema.role == "patient":
+        patient = Patient(
+            user_id=saved_user.id,
+        )
 
-            patient = Patient(
-                user_id=saved_user.id,
-            )
-
-            await ProfileRepository.create_patient(patient)
-
-        elif schema.role == "doctor":
-
-            doctor = Doctor(
-                user_id=saved_user.id,
-                specialization="General Physiotherapy",
-            )
-
-            await ProfileRepository.create_doctor(doctor)
+        await ProfileRepository.create_patient(patient)
 
         return saved_user
 

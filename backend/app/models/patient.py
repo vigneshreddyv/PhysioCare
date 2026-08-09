@@ -13,5 +13,7 @@ class Patient(Document):
 
     primary_doctor_id: Optional[PydanticObjectId] = None
 
+    saved_address: Optional[dict] = None
+
     class Settings:
         name = "patients"
