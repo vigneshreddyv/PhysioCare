@@ -3,7 +3,7 @@ from typing import List, Optional
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.doctor import DoctorOut
-from app.schemas.patient import PatientOut
+from app.schemas.patient import PatientOut, SavedAddressUpdate
 
 
 class UserService:
@@ -26,8 +26,15 @@ class UserService:
                     full_name=user.full_name,
                     email=user.email,
                     specialization=d.specialization,
+                    experience_years=d.experience_years,
+                    expertise=d.expertise,
                     profile_image=d.profile_image,
                     bio=d.bio,
+                    rating=d.rating,
+                    total_reviews=d.total_reviews,
+                    consultation_fee=d.consultation_fee,
+                    home_visit_available=d.home_visit_available,
+                    online_consultation_available=d.online_consultation_available,
                     is_active_today=d.is_active_today,
                 )
             )
@@ -78,7 +85,36 @@ class UserService:
             phone=patient.phone,
             date_of_birth=patient.date_of_birth,
             subscription_status=patient.subscription_status,
+            saved_address=patient.saved_address,
         )
+
+    @staticmethod
+    async def update_patient_address(
+        user_id: str,
+        address: SavedAddressUpdate,
+    ) -> Optional[PatientOut]:
+
+        patient = await ProfileRepository.get_patient_by_user_id(user_id)
+
+        if not patient:
+            return None
+
+        patient.saved_address = address.model_dump()
+
+        await patient.save()
+
+        return await UserService.get_patient_profile(user_id)
+
+    @staticmethod
+    async def get_patient_address(
+    user_id: str,
+    ):
+        patient = await ProfileRepository.get_patient_by_user_id(user_id)
+
+        if not patient:
+            return None
+
+        return patient.saved_address
 
     @staticmethod
     async def get_doctor_profile(user_id: str) -> Optional[DoctorOut]:
@@ -97,7 +133,15 @@ class UserService:
             full_name=user.full_name,
             email=user.email,
             specialization=doctor.specialization,
+            experience_years=doctor.experience_years,
+            expertise=doctor.expertise,
             profile_image=doctor.profile_image,
             bio=doctor.bio,
+            rating=doctor.rating,
+            total_reviews=doctor.total_reviews,
+            consultation_fee=doctor.consultation_fee,
+            home_visit_available=doctor.home_visit_available,
+            online_consultation_available=doctor.online_consultation_available,
             is_active_today=doctor.is_active_today,
-        )
+        ) 
+    

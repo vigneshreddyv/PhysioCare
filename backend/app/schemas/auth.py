@@ -1,10 +1,12 @@
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
 
 class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
     full_name: str
-    role: str = Field(..., description="patient, doctor, admin")
+    role: str = "patient"
 
 class UserLogin(BaseModel):
     email: EmailStr
