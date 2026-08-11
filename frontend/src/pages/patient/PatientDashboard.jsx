@@ -122,8 +122,13 @@ export default function PatientDashboard() {
   const userName = localStorage.getItem('user_name') || 'there';
 
   const handleService = (service) => {
-    navigate(`/patient/book?service=${service}`);
-  };
+    if (service === 'laboratory') {
+      navigate('/patient/laboratory');
+        return;
+        }
+
+        navigate(`/patient/book?service=${service}`);
+      };
 
   return (
     <div className="max-w-[1500px] mx-auto">

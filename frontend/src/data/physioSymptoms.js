@@ -1,0 +1,17 @@
+export const physioSymptoms = [
+  'Pain',
+  'Swelling',
+  'Stiffness',
+  'Muscle weakness',
+  'Numbness',
+  'Tingling',
+  'Difficulty walking',
+  'Difficulty moving',
+  'Reduced flexibility',
+  'Muscle tightness',
+  'Balance problems',
+  'Pain while standing',
+  'Pain while sitting',
+  'Pain while climbing stairs',
+  'Other symptoms',
+];

@@ -1,3 +1,9 @@
+import LaboratoryPayment from './pages/patient/LaboratoryPayment';
+import LaboratoryReview from './pages/patient/LaboratoryReview';
+import LaboratoryDateTime from './pages/patient/LaboratoryDateTime';
+import HomeVisitLab from './pages/patient/HomeVisitLab';
+import LaboratoryTestSelection from './pages/patient/LaboratoryTestSelection';
+import ClinicLaboratoryVisit from './pages/patient/ClinicLaboratoryVisit';
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -27,6 +33,7 @@ import ServiceSelection from './pages/patient/ServiceSelection';
 import BookAppointment from './pages/patient/BookAppointment';
 import PatientHistory from './pages/patient/PatientHistory';
 import PatientProfile from './pages/patient/PatientProfile';
+import LaboratoryTests from './pages/patient/LaboratoryTests';
 
 
 // Doctor pages
@@ -45,6 +52,7 @@ import Notifications from './pages/admin/Notifications';
 import AdminPatientEdit from './pages/admin/AdminPatientEdit';
 import AdminPatientHistory from './pages/admin/AdminPatientHistory';
 import PatientsCreate from './pages/admin/PatientsCreate';
+
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -111,6 +119,42 @@ export default function App() {
                 }
               >
                 <Route path="services" element={<ServiceSelection />} />
+
+                <Route
+                  path="laboratory"
+                  element={<LaboratoryTests />}
+                />
+
+                <Route
+                  path="laboratory/home-visit"
+                  element={<HomeVisitLab />}
+                />
+
+                <Route
+                  path="laboratory/clinic"
+                  element={<ClinicLaboratoryVisit />}
+                />
+
+                <Route
+                  path="laboratory/tests"
+                  element={<LaboratoryTestSelection />}
+                />
+
+                <Route
+                  path="laboratory/date-time"
+                  element={<LaboratoryDateTime />}
+                />
+
+                <Route
+                  path="laboratory/review"
+                  element={<LaboratoryReview />}
+                />
+
+                <Route
+                  path="laboratory/payment"
+                  element={<LaboratoryPayment />}
+                />
+
                 <Route path="dashboard" element={<PatientDashboard />} />
                 <Route path="book" element={<BookAppointment />} />
                 <Route path="history" element={<PatientHistory />} />
