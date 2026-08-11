@@ -318,9 +318,14 @@ const handleAddressChange = (field, value) => {
   });
 
   const handleServiceSelect = (service) => {
-    setSelectedService(service);
-    setStep(2);
-  };
+    if (service.id === 'laboratory') {
+      navigate('/patient/laboratory');
+        return;
+        }
+
+        setSelectedService(service);
+        setStep(2);
+      };
 
   const toggleSymptom = (symptom) => {
     if (symptom === 'Other symptoms') {

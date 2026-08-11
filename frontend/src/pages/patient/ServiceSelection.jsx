@@ -61,8 +61,13 @@ export default function ServiceSelection() {
   const firstName = user?.full_name?.split(' ')[0] || 'there';
 
   const handleServiceSelect = (service) => {
-    navigate(`/patient/book?service=${service.id}`);
-  };
+    if (service.id === 'laboratory') {
+      navigate('/patient/laboratory');
+        return;
+        }
+
+        navigate(`/patient/book?service=${service.id}`);
+        };
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
