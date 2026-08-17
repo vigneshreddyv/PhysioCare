@@ -60,7 +60,7 @@ function MedicalBackdrop() {
 // already installed in the project. `badge` is optional (e.g. unread count).
 const navigation = [
   { label: 'Services', icon: LayoutGrid, path: '/patient/dashboard' },
-  { label: 'Appointments', icon: CalendarDays, path: '/patient/history' },
+  { label: 'Appointments', icon: CalendarDays, path: '/patient/appointments' },
   { label: 'My Care Plan', icon: HeartPulse, path: '/patient/care-plan' },
   { label: 'Reports', icon: FileText, path: '/patient/reports' },
   { label: 'Messages', icon: Mail, path: '/notifications', badge: 3 },

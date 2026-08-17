@@ -20,12 +20,62 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
 
   // Status colors and labels
   const statusConfig = {
-    completed: { color: 'green-100', text: 'green-800', label: 'Completed', icon: 'check_circle', bgClass: 'bg-green-100/30' },
-    'in_progress': { color: 'yellow-100', text: 'yellow-800', label: 'In Progress', icon: 'pause_circle_filled', bgClass: 'bg-yellow-100/30' },
-    scheduled: { color: 'blue-100', text: 'blue-800', label: 'Scheduled', icon: 'event_available', bgClass: 'bg-blue-100/30' },
-    cancelled: { color: 'red-100', text: 'red-800', label: 'Cancelled', icon: 'cancel', bgClass: 'bg-red-100/30' },
-    no_show: { color: 'gray-100', text: 'gray-800', label: 'No Show', icon: 'person_off', bgClass: 'bg-gray-100/30' }
-  };
+  pending_payment: {
+    color: 'yellow-100',
+    text: 'yellow-800',
+    label: 'Payment Pending',
+    icon: 'payments',
+    bgClass: 'bg-yellow-100/30'
+  },
+
+  confirmed: {
+    color: 'green-100',
+    text: 'green-800',
+    label: 'Confirmed',
+    icon: 'event_available',
+    bgClass: 'bg-green-100/30'
+  },
+
+  scheduled: {
+    color: 'blue-100',
+    text: 'blue-800',
+    label: 'Scheduled',
+    icon: 'event_available',
+    bgClass: 'bg-blue-100/30'
+  },
+
+  in_progress: {
+    color: 'yellow-100',
+    text: 'yellow-800',
+    label: 'In Progress',
+    icon: 'pause_circle_filled',
+    bgClass: 'bg-yellow-100/30'
+  },
+
+  completed: {
+    color: 'green-100',
+    text: 'green-800',
+    label: 'Completed',
+    icon: 'check_circle',
+    bgClass: 'bg-green-100/30'
+  },
+
+  cancelled: {
+    color: 'red-100',
+    text: 'red-800',
+    label: 'Cancelled',
+    icon: 'cancel',
+    bgClass: 'bg-red-100/30'
+  },
+
+  no_show: {
+    color: 'gray-100',
+    text: 'gray-800',
+    label: 'No Show',
+    icon: 'person_off',
+    bgClass: 'bg-gray-100/30'
+  }
+};
 
   const statusInfo = statusConfig[status] || statusConfig.scheduled;
 
@@ -157,7 +207,7 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
               </div>
             </div>
           )}
-          {status !== 'scheduled' && (
+          {status !== 'scheduled' && status !== 'confirmed' && (
             <div className="text-center text-sm text-gray-500">
               {/* Show appointment outcome or notes */}
               {status === 'completed' && (

@@ -403,14 +403,21 @@ const handleHealthContinue = (event) => {
     event.preventDefault();
 
     if (
-      !selectedService ||
-      !selectedDoctor ||
-      !selectedDate ||
-      !selectedTime ||
-      !reason.trim()
-    ) {
-      return;
-    }
+  !selectedService ||
+  !selectedDoctor ||
+  !selectedDate ||
+  !selectedTime ||
+  !selectedProblem
+) {
+  return;
+}
+
+if (
+  selectedProblem.toLowerCase().includes('other') &&
+  !customProblem.trim()
+) {
+  return;
+}
 
     if (selectedService.id === 'home_visit' && !visitAddress.trim()) {
       return;

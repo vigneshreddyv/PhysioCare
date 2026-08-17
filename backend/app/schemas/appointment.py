@@ -32,11 +32,14 @@ class AppointmentUpdate(BaseModel):
     payment_method: Optional[str] = None
     payment_status: Optional[str] = None
     payment_id: Optional[str] = None
+    payment_order_id: Optional[str] = None
+
+    meeting_link: Optional[str] = None
 
     feedback_rating: Optional[int] = Field(
         default=None,
         ge=1,
-        le=5
+        le=5,
     )
 
     feedback_comment: Optional[str] = None
@@ -72,6 +75,9 @@ class AppointmentOut(BaseModel):
     payment_method: Optional[str] = None
     payment_status: str
     payment_id: Optional[str] = None
+    payment_order_id: Optional[str] = None
+
+    meeting_link: Optional[str] = None
 
     feedback_rating: Optional[int] = None
     feedback_comment: Optional[str] = None
