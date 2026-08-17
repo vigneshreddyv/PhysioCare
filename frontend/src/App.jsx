@@ -29,6 +29,7 @@ import NotFound from './pages/common/NotFound';
 
 // Patient pages
 import PatientDashboard from './pages/patient/PatientDashboard';
+import PatientAppointments from './pages/patient/PatientAppointments';
 import ServiceSelection from './pages/patient/ServiceSelection';
 import BookAppointment from './pages/patient/BookAppointment';
 import PatientHistory from './pages/patient/PatientHistory';
@@ -126,6 +127,11 @@ export default function App() {
                 />
 
                 <Route
+                  path="appointments"
+                  element={<PatientAppointments />}
+                />
+
+                <Route
                   path="laboratory/home-visit"
                   element={<HomeVisitLab />}
                 />
@@ -156,6 +162,7 @@ export default function App() {
                 />
 
                 <Route path="dashboard" element={<PatientDashboard />} />
+                <Route path="appointments" element={<PatientAppointments />} />
                 <Route path="book" element={<BookAppointment />} />
                 <Route path="history" element={<PatientHistory />} />
                 <Route path="profile" element={<PatientProfile />} />

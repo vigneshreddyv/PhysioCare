@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from typing import List
 
@@ -38,7 +38,12 @@ class AppointmentService:
             )
 
     # Prevent booking appointments in the past
-        if schema.appointment_date < datetime.utcnow():
+        appointment_date = schema.appointment_date
+
+        if appointment_date.tzinfo is None:
+            appointment_date = appointment_date.replace(tzinfo=timezone.utc)
+
+        if appointment_date < datetime.now(timezone.utc):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Appointment date must be in the future",
@@ -47,7 +52,7 @@ class AppointmentService:
     # Doctor availability
         doctor_busy = await AppointmentRepository.doctor_has_slot(
             str(doctor.id),
-            schema.appointment_date,
+            appointment_date,
             schema.time_slot,
         )
 
@@ -70,6 +75,13 @@ class AppointmentService:
                 detail="You already have an appointment at this time",
             )
 
+        payment_method = (schema.payment_method or "offline").lower()
+
+        if payment_method == "online":
+            appointment_status = "pending_payment"
+        else:
+            appointment_status = "confirmed"
+
         appointment = Appointment(
             patient_id=patient.id,
             doctor_id=doctor.id,
@@ -81,10 +93,10 @@ class AppointmentService:
             duration_days=schema.duration_days,
             pain_level=schema.pain_level,
             visit_address=schema.visit_address,
-            status="approved",
+            status=appointment_status,
             billing_status="pending",
             billing_amount=120.0,
-            payment_method=schema.payment_method,
+            payment_method=payment_method,
             payment_status="pending",
         )
 
@@ -204,6 +216,9 @@ class AppointmentService:
             payment_method=a.payment_method,
             payment_status=a.payment_status,
             payment_id=a.payment_id,
+            payment_order_id=a.payment_order_id,
+
+            meeting_link=a.meeting_link,
 
             feedback_rating=a.feedback_rating,
             feedback_comment=a.feedback_comment,
