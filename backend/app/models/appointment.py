@@ -10,7 +10,7 @@ class Appointment(Document):
     doctor_id: PydanticObjectId
 
     # Service selected by the patient
-    service_type: str
+    service_type: str = "clinic_consultation"
 
     appointment_date: datetime
     time_slot: str
@@ -25,7 +25,9 @@ class Appointment(Document):
     visit_address: Optional[str] = None
 
     # Appointment status
-    status: Annotated[str, Indexed()] = "approved"
+    # pending_payment → confirmed → in_progress → completed
+    # confirmed → cancelled
+    status: Annotated[str, Indexed()] = "pending_payment"
 
     # Billing
     billing_status: str = "pending"
@@ -35,6 +37,10 @@ class Appointment(Document):
     payment_method: Optional[str] = None
     payment_status: str = "pending"
     payment_id: Optional[str] = None
+    payment_order_id: Optional[str] = None
+
+    # Online consultation
+    meeting_link: Optional[str] = None
 
     # Feedback after treatment
     feedback_rating: Optional[int] = None

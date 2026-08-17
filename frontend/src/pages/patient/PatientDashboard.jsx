@@ -115,9 +115,11 @@ export default function PatientDashboard() {
   });
 
   const upcoming = appointments.filter(
-    (appointment) =>
-      appointment.status === 'scheduled' || appointment.status === 'in_progress'
-  );
+  (appointment) =>
+    appointment.status === 'confirmed' ||
+    appointment.status === 'scheduled' ||
+    appointment.status === 'in_progress'
+);
 
   const userName = localStorage.getItem('user_name') || 'there';
 

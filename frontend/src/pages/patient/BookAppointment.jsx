@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { DayPicker } from 'react-day-picker';
 import { format, isBefore, startOfToday } from 'date-fns';
+
 import {
   ArrowLeft,
   ArrowRight,
@@ -295,27 +296,65 @@ const handleAddressChange = (field, value) => {
     },
   });
 
-  const bookMutation = useMutation({
-    mutationFn: async (appointmentData) => {
-      const response = await api.post('/appointments', appointmentData);
-      return response.data;
-    },
+const bookMutation = useMutation({
+  mutationFn: async (appointmentData) => {
 
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['appointments'],
+    // =====================================================
+    // OFFLINE PAYMENT
+    // =====================================================
+
+    if (paymentMethod === 'offline') {
+      const response = await api.post(
+        '/appointments',
+        appointmentData
+      );
+
+      return response.data;
+    }
+
+    // =====================================================
+    // ONLINE PAYMENT
+    // =====================================================
+
+    const orderResponse = await api.post(
+      '/payments/create-order',
+      {
+        appointment: appointmentData,
+      }
+    );
+
+    const order = orderResponse.data;
+
+    // Open Razorpay Checkout
+    const verifiedAppointment =
+      await openRazorpayCheckout({
+        order,
+        appointmentData,
       });
 
-      setModalOpen(true);
-    },
+    return verifiedAppointment;
+  },
 
-    onError: (err) => {
-      console.error(
-        'Failed to book appointment:',
-        err.response?.data || err.message
-      );
-    },
-  });
+  onSuccess: (data) => {
+    console.log(
+      'Appointment successfully created:',
+      data
+    );
+
+    queryClient.invalidateQueries({
+      queryKey: ['appointments'],
+    });
+
+    setModalOpen(true);
+  },
+
+  onError: (err) => {
+    console.error(
+      'Booking/payment failed:',
+      err.response?.data || err.message
+    );
+  },
+});
 
   const handleServiceSelect = (service) => {
     if (service.id === 'laboratory') {
@@ -399,18 +438,134 @@ const handleHealthContinue = (event) => {
     setStep(5);
   };
 
+  const openRazorpayCheckout = ({
+  order,
+  appointmentData,
+}) => {
+  return new Promise((resolve, reject) => {
+    if (!window.Razorpay) {
+      reject(
+        new Error(
+          'Razorpay Checkout failed to load. Please refresh the page.'
+        )
+      );
+      return;
+    }
+
+    const options = {
+      key: order.key_id,
+
+      amount: order.amount,
+
+      currency: order.currency,
+
+      name: 'PhysioCare',
+
+      description: 'Physiotherapy Appointment',
+
+      order_id: order.order_id,
+
+      // ---------------------------------------------------------
+      // RAZORPAY PAYMENT METHODS
+      // UPI is explicitly included and placed first.
+      //
+      // Mobile Web:
+      //   Razorpay uses UPI Intent and opens the selected UPI app.
+      //
+      // Desktop Web:
+      //   Razorpay automatically shows a UPI QR code.
+      //
+      // Cards / Netbanking / Wallets remain available as well.
+      // ---------------------------------------------------------
+      
+          
+
+      handler: async function (response) {
+        try {
+          const verifyResponse = await api.post(
+            '/payments/verify',
+            {
+              appointment: appointmentData,
+
+              razorpay_order_id:
+                response.razorpay_order_id,
+
+              razorpay_payment_id:
+                response.razorpay_payment_id,
+
+              razorpay_signature:
+                response.razorpay_signature,
+            }
+          );
+
+          resolve(verifyResponse.data);
+        } catch (error) {
+          console.error(
+            'Payment verification failed:',
+            error.response?.data || error.message
+          );
+
+          reject(error);
+        }
+      },
+
+      modal: {
+        ondismiss: function () {
+          reject(
+            new Error(
+              'Payment was cancelled.'
+            )
+          );
+        },
+      },
+
+      theme: {
+        color: '#0b84a5',
+      },
+    };
+
+    const razorpay = new window.Razorpay(options);
+
+    razorpay.on(
+      'payment.failed',
+      function (response) {
+        console.error(
+          'Razorpay payment failed:',
+          response.error
+        );
+
+        reject(
+          new Error(
+            response.error?.description ||
+              'Payment failed. Please try again.'
+          )
+        );
+      }
+    );
+
+    razorpay.open();
+  });
+};
+
   const handleSubmit = (event) => {
     event.preventDefault();
 
     if (
-      !selectedService ||
-      !selectedDoctor ||
-      !selectedDate ||
-      !selectedTime ||
-      !reason.trim()
-    ) {
-      return;
-    }
+  !selectedService ||
+  !selectedDoctor ||
+  !selectedDate ||
+  !selectedTime ||
+  !selectedProblem
+) {
+  return;
+}
+
+if (
+  selectedProblem.toLowerCase().includes('other') &&
+  !customProblem.trim()
+) {
+  return;
+}
 
     if (selectedService.id === 'home_visit' && !visitAddress.trim()) {
       return;
@@ -425,45 +580,46 @@ const handleHealthContinue = (event) => {
       0
     );
 
-    bookMutation.mutate({
-      doctor_id: selectedDoctor.id,
+bookMutation.mutate({
+  doctor_id: selectedDoctor.id,
 
-      service_type: selectedService.id,
+  service_type: selectedService.id,
 
-      appointment_date: appointmentDate.toISOString(),
-      time_slot: selectedTime,
+  appointment_date: appointmentDate.toISOString(),
 
-      reason:
-        selectedProblem?.toLowerCase().includes('other')
-          ? customProblem.trim()
-          : selectedProblem,
+  time_slot: selectedTime,
 
-symptoms:
-  [
-    ...selectedSymptoms.filter(
-      (symptom) => symptom !== 'Other symptoms'
-    ),
-    ...(selectedSymptoms.includes('Other symptoms') &&
-    customSymptoms.trim()
-      ? [customSymptoms.trim()]
-      : []),
-  ].join(', ') || null,
+  reason:
+    selectedProblem?.toLowerCase().includes('other')
+      ? customProblem.trim()
+      : selectedProblem,
 
-      duration_days: durationDays
-        ? Number(durationDays)
-        : null,
+  symptoms:
+    [
+      ...selectedSymptoms.filter(
+        (symptom) => symptom !== 'Other symptoms'
+      ),
 
-      pain_level: painLevel || null,
+      ...(selectedSymptoms.includes('Other symptoms') &&
+      customSymptoms.trim()
+        ? [customSymptoms.trim()]
+        : []),
+    ].join(', ') || null,
 
-      visit_address:
-        selectedService.id === 'home_visit'
-          ? visitAddress.trim()
-          : null,
+  duration_days: durationDays
+    ? Number(durationDays)
+    : null,
 
-      payment_method: paymentMethod,
-    });
-  };
+  pain_level: painLevel || null,
 
+  visit_address:
+    selectedService.id === 'home_visit'
+      ? visitAddress.trim()
+      : null,
+
+  payment_method: paymentMethod,
+});
+};
   const handleModalClose = () => {
     setModalOpen(false);
     navigate('/patient/dashboard');
