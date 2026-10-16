@@ -1,6 +1,18 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
+import {
+  LayoutGrid,
+  Users,
+  Stethoscope,
+  TrendingUp,
+  Home,
+  CreditCard,
+  Settings,
+  LogOut,
+  PlusCircle,
+  HeartPulse,
+} from 'lucide-react';
 
 export default function Sidebar({ className = '' }) {
   const { user, logout } = useAuth();
@@ -9,91 +21,100 @@ export default function Sidebar({ className = '' }) {
 
   const menuItems = {
     admin: [
-      { path: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
-      { path: '/admin/patients', label: 'Patients', icon: 'groups' },
-      { path: '/admin/doctors', label: 'Doctors', icon: 'medical_services' },
-      { path: '/admin/analytics', label: 'Analytics', icon: 'analytics' },
+      { path: '/admin/dashboard', label: 'Dashboard', icon: LayoutGrid },
+      { path: '/admin/patients', label: 'Patients', icon: Users },
+      { path: '/admin/doctors', label: 'Doctors', icon: Stethoscope },
+      { path: '/admin/analytics', label: 'Analytics', icon: TrendingUp },
     ],
     doctor: [
-      { path: '/doctor/dashboard', label: 'Dashboard', icon: 'dashboard' },
-      { path: '/doctor/patients', label: 'Patients', icon: 'groups' },
-      { path: '/doctor/home-visits', label: 'Home Visits', icon: 'home_health' },
+      { path: '/doctor/dashboard', label: 'Dashboard', icon: LayoutGrid },
+      { path: '/doctor/patients', label: 'My Patients', icon: Users },
+      { path: '/doctor/home-visits', label: 'Home Visits', icon: Home },
     ]
   };
 
   const footerItems = {
     admin: [
-      { path: '/admin/billing', label: 'Billing', icon: 'payments' },
-      { path: '/admin/settings', label: 'Settings', icon: 'settings' }
+      { path: '/admin/billing', label: 'Billing', icon: CreditCard },
+      { path: '/admin/settings', label: 'Settings', icon: Settings }
     ],
     doctor: [
-      { path: '/doctor/settings', label: 'Settings', icon: 'settings' }
+      { path: '/doctor/settings', label: 'Settings', icon: Settings }
     ]
   };
 
   const items = menuItems[role] || menuItems.admin;
   const footers = footerItems[role] || footerItems.admin;
 
-  const activeClass = "flex items-center gap-3 px-4 py-3 text-primary dark:text-primary-fixed-dim font-bold bg-secondary-container/30 dark:bg-secondary-container/10 rounded-lg scale-95 transition-all duration-200";
-  const inactiveClass = "flex items-center gap-3 px-4 py-3 text-on-surface-variant dark:text-outline-variant hover:text-primary dark:hover:text-primary-fixed-dim transition-colors hover:bg-surface-container-high dark:hover:bg-surface-variant transition-all duration-200 rounded-lg";
+  const activeClass = "flex items-center gap-3 px-4 py-2.5 text-[#0F6B63] font-bold bg-[#EEF5F1] rounded-xl border border-[#0F6B63]/10 transition-all duration-150 text-xs uppercase tracking-wider";
+  const inactiveClass = "flex items-center gap-3 px-4 py-2.5 text-[#60716E] hover:text-[#0F6B63] hover:bg-[#EEF5F1]/30 transition-all duration-150 rounded-xl text-xs uppercase tracking-wider font-semibold";
 
   return (
-    <nav className={`bg-surface-container-low dark:bg-inverse-surface h-screen w-64 fixed left-0 top-0 shadow-sm z-50 flex flex-col py-stack-lg px-stack-md border-r border-surface-container ${className}`}>
+    <nav className={`bg-white h-screen w-[268px] fixed left-0 top-0 border-r border-[#E5E0D6] flex flex-col py-6 px-4 z-40 ${className}`}>
+      
       {/* Brand Header */}
-      <div className="mb-stack-lg px-4 flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center shrink-0">
-          <span className="material-symbols-outlined text-on-primary-container">medical_services</span>
+      <div className="mb-8 px-2.5 flex items-center gap-3 pb-5 border-b border-[#E5E0D6]/60">
+        <div className="w-10 h-10 rounded-xl bg-[#EEF5F1] flex items-center justify-center shrink-0 border border-[#0F6B63]/15">
+          <HeartPulse className="w-5 h-5 text-[#0F6B63]" />
         </div>
         <div>
-          <h1 className="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed-dim">PhysioCare</h1>
-          <p className="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{role} Portal</p>
+          <h1 className="text-lg font-black tracking-tight text-[#183B4A]">PhysioCare</h1>
+          <p className="text-[9px] font-bold text-[#60716E] uppercase tracking-widest">{role} Workspace</p>
         </div>
       </div>
 
-      {/* Primary CTA (Role specific or default) */}
+      {/* Primary Action Button */}
       <button 
-        onClick={() => role === 'admin' ? navigate('/admin/doctors') : navigate('/doctor/dashboard')}
-        className="mb-stack-lg bg-primary text-on-primary font-label-md text-label-md py-3 px-4 rounded-full w-full hover:bg-secondary transition-colors shadow-sm flex items-center justify-center gap-2"
+        onClick={() => role === 'admin' ? navigate('/admin/patients/create') : navigate('/doctor/dashboard')}
+        className="mb-6 bg-[#0F6B63] hover:bg-[#0F6B63]/90 text-white py-2.5 px-4 rounded-xl w-full transition-all text-xs font-bold shadow-xs flex items-center justify-center gap-2 cursor-pointer border border-transparent"
       >
-        <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>add</span>
+        <PlusCircle className="w-4 h-4" />
         Portal Actions
       </button>
 
-      {/* Main Navigation links */}
-      <div className="flex-1 overflow-y-auto space-y-1">
-        {items.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            className={({ isActive }) => isActive ? activeClass : inactiveClass}
-          >
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>{item.icon}</span>
-            <span className="font-body-md text-body-md">{item.label}</span>
-          </NavLink>
-        ))}
+      {/* Main Navigation */}
+      <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) => isActive ? activeClass : inactiveClass}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
       </div>
 
-      {/* Footer Navigation links */}
-      <div className="mt-auto pt-stack-sm border-t border-outline-variant/30 space-y-1">
-        {footers.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            className={({ isActive }) => isActive ? activeClass : inactiveClass}
-          >
-            <span className="material-symbols-outlined">{item.icon}</span>
-            <span className="font-body-md text-body-md">{item.label}</span>
-          </NavLink>
-        ))}
-        {/* Logout Action */}
+      {/* Footer Links & Logout */}
+      <div className="mt-auto pt-4 border-t border-[#E5E0D6]/60 space-y-1.5">
+        {footers.map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) => isActive ? activeClass : inactiveClass}
+            >
+              <Icon className="w-4 h-4 shrink-0" />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+        
+        {/* Logout */}
         <button
           onClick={logout}
-          className="w-full flex items-center gap-3 px-4 py-3 text-error hover:bg-error-container/20 transition-colors rounded-lg text-left"
+          className="w-full flex items-center gap-3 px-4 py-2.5 text-red-700 hover:bg-red-50 transition-all rounded-xl text-left text-xs uppercase tracking-wider font-bold cursor-pointer"
         >
-          <span className="material-symbols-outlined">logout</span>
-          <span className="font-body-md text-body-md">Logout</span>
+          <LogOut className="w-4 h-4 shrink-0" />
+          <span>Logout</span>
         </button>
       </div>
+
     </nav>
   );
 }

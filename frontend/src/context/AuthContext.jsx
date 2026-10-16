@@ -11,7 +11,7 @@ export function AuthProvider({ children }) {
     try {
       const response = await api.get('/auth/me');
       setUser(response.data);
-    } catch (error) {
+    } catch {
       // Token is invalid, clear session
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');

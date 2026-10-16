@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   MapPin,
@@ -9,11 +9,19 @@ import {
   Landmark,
   Loader2,
   CheckCircle2,
+  AlertTriangle,
+  Sun,
+  Moon,
+  User,
+  Mail,
+  Phone,
+  Calendar,
+  ShieldCheck,
+  CreditCard,
 } from 'lucide-react';
 import { useAuth } from '../../context/useAuth';
 import { useTheme } from '../../context/useTheme';
 import api from '../../services/api';
-import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 
 export default function PatientProfile() {
@@ -24,36 +32,31 @@ export default function PatientProfile() {
   const location = useLocation();
 
   const [address, setAddress] = useState('');
+  const [loadingAddress, setLoadingAddress] = useState(true);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [addressError, setAddressError] = useState('');
+  const [addressSuccess, setAddressSuccess] = useState('');
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [detectingLocation, setDetectingLocation] = useState(false);
 
-const [loadingAddress, setLoadingAddress] = useState(true);
-const [savingAddress, setSavingAddress] = useState(false);
+  const [addressFields, setAddressFields] = useState({
+    apartment: '',
+    flat: '',
+    area: '',
+    city: '',
+    state: '',
+    pincode: '',
+    landmark: '',
+  });
 
-const [addressError, setAddressError] = useState('');
-const [addressSuccess, setAddressSuccess] = useState('');
-
-const [editingAddress, setEditingAddress] = useState(false);
-
-const [detectingLocation, setDetectingLocation] = useState(false);
-
-const [addressFields, setAddressFields] = useState({
-  apartment: '',
-  flat: '',
-  area: '',
-  city: '',
-  state: '',
-  pincode: '',
-  landmark: '',
-});
-
-const [coordinates, setCoordinates] = useState({
-  latitude: null,
-  longitude: null,
-});
+  const [coordinates, setCoordinates] = useState({
+    latitude: null,
+    longitude: null,
+  });
 
   // ============================
   // LOAD SAVED ADDRESS
   // ============================
-
   useEffect(() => {
     const loadAddress = async () => {
       try {
@@ -61,46 +64,41 @@ const [coordinates, setCoordinates] = useState({
         setAddressError('');
 
         const response = await api.get('/users/me/address');
+        const saved = response.data?.saved_address;
 
-const saved = response.data?.saved_address;
+        if (saved) {
+          const formattedAddress = [
+            saved.building_name,
+            saved.door_number,
+            saved.area,
+            saved.street,
+            saved.landmark,
+            saved.pincode,
+          ]
+            .filter(Boolean)
+            .join(', ');
 
-if (saved) {
-  const formattedAddress = [
-    saved.building_name,
-    saved.door_number,
-    saved.area,
-    saved.street,
-    saved.landmark,
-    saved.pincode,
-  ]
-    .filter(Boolean)
-    .join(', ');
+          setAddress(formattedAddress);
 
-  setAddress(formattedAddress);
+          setAddressFields({
+            apartment: saved.building_name || '',
+            flat: saved.door_number || '',
+            area: saved.area || '',
+            city: saved.street?.split(',')[0]?.trim() || '',
+            state: saved.street?.split(',')[1]?.trim() || '',
+            pincode: saved.pincode || '',
+            landmark: saved.landmark === 'Not specified' ? '' : saved.landmark || '',
+          });
 
-  setAddressFields({
-    apartment: saved.building_name || '',
-    flat: saved.door_number || '',
-    area: saved.area || '',
-    city: saved.street?.split(',')[0]?.trim() || '',
-    state: saved.street?.split(',')[1]?.trim() || '',
-    pincode: saved.pincode || '',
-    landmark:
-      saved.landmark === 'Not specified'
-        ? ''
-        : saved.landmark || '',
-  });
-
-  setCoordinates({
-    latitude: saved.latitude ?? null,
-    longitude: saved.longitude ?? null,
-  });
-} else {
-  setAddress('');
-}
+          setCoordinates({
+            latitude: saved.latitude ?? null,
+            longitude: saved.longitude ?? null,
+          });
+        } else {
+          setAddress('');
+        }
       } catch (error) {
         console.error('Failed to load address:', error);
-
         if (error.response?.status !== 404) {
           setAddressError('Unable to load your saved address.');
         }
@@ -111,298 +109,173 @@ if (saved) {
 
     loadAddress();
   }, []);
-   
+
   const detectCurrentLocation = () => {
-  if (!navigator.geolocation) {
-    setAddressError(
-      'Location detection is not supported by this browser.'
-    );
-    return;
-  }
-
-  setDetectingLocation(true);
-  setAddressError('');
-  setAddressSuccess('');
-
-  navigator.geolocation.getCurrentPosition(
-    async (position) => {
-      const { latitude, longitude } = position.coords;
-
-      setCoordinates({
-        latitude,
-        longitude,
-      });
-
-      try {
-        /*
-         * Reverse geocoding using OpenStreetMap.
-         * This converts latitude/longitude into area,
-         * city, state and PIN code.
-         */
-
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-          {
-            headers: {
-              Accept: 'application/json',
-            },
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error('Unable to detect address.');
-        }
-
-        const data = await response.json();
-        const location = data.address || {};
-
-        setAddressFields((prev) => ({
-          ...prev,
-
-          area:
-            location.suburb ||
-            location.neighbourhood ||
-            location.residential ||
-            location.road ||
-            '',
-
-          city:
-            location.city ||
-            location.town ||
-            location.village ||
-            location.municipality ||
-            '',
-
-          state:
-            location.state ||
-            '',
-
-          pincode:
-            location.postcode ||
-            '',
-        }));
-
-        setAddressSuccess(
-          'Your current location has been detected. Please complete your house details.'
-        );
-      } catch (error) {
-        console.error('Reverse geocoding failed:', error);
-
-        setAddressError(
-          'Location detected, but address details could not be loaded. Please enter them manually.'
-        );
-      } finally {
-        setDetectingLocation(false);
-      }
-    },
-
-    (error) => {
-      console.error('Location error:', error);
-
-      let message = 'Unable to detect your location.';
-
-      if (error.code === error.PERMISSION_DENIED) {
-        message =
-          'Location permission was denied. Please allow location access in your browser.';
-      } else if (error.code === error.POSITION_UNAVAILABLE) {
-        message =
-          'Your location is currently unavailable.';
-      } else if (error.code === error.TIMEOUT) {
-        message =
-          'Location detection timed out. Please try again.';
-      }
-
-      setAddressError(message);
-      setDetectingLocation(false);
-    },
-
-    {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 0,
+    if (!navigator.geolocation) {
+      setAddressError('Location detection is not supported by this browser.');
+      return;
     }
-  );
-};
 
-const handleAddressChange = (field, value) => {
-  setAddressFields((prev) => ({
-    ...prev,
-    [field]: value,
-  }));
-
-  if (addressError) {
+    setDetectingLocation(true);
     setAddressError('');
-  }
-
-  if (addressSuccess) {
     setAddressSuccess('');
-  }
-};
 
-const handleAddressFocus = () => {
-  if (addressError) {
-    setAddressError('');
-  }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
 
-  if (addressSuccess) {
-    setAddressSuccess('');
-  }
-};
+        setCoordinates({
+          latitude,
+          longitude,
+        });
 
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+            {
+              headers: {
+                Accept: 'application/json',
+              },
+            }
+          );
+
+          if (!response.ok) {
+            throw new Error('Unable to detect address.');
+          }
+
+          const data = await response.json();
+          const location = data.address || {};
+
+          setAddressFields((prev) => ({
+            ...prev,
+            area: location.suburb || location.neighbourhood || location.residential || location.road || '',
+            city: location.city || location.town || location.village || location.municipality || '',
+            state: location.state || '',
+            pincode: location.postcode || '',
+          }));
+
+          setAddressSuccess('Your current location has been detected. Please complete your house details.');
+        } catch (error) {
+          console.error('Reverse geocoding failed:', error);
+          setAddressError('Location detected, but address details could not be loaded. Please enter them manually.');
+        } finally {
+          setDetectingLocation(false);
+        }
+      },
+      (error) => {
+        console.error('Location error:', error);
+        let message = 'Unable to detect your location.';
+        if (error.code === error.PERMISSION_DENIED) {
+          message = 'Location permission was denied. Please allow location access in your browser.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          message = 'Your location is currently unavailable.';
+        } else if (error.code === error.TIMEOUT) {
+          message = 'Location detection timed out. Please try again.';
+        }
+        setAddressError(message);
+        setDetectingLocation(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handleAddressChange = (field, value) => {
+    setAddressFields((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+    if (addressError) setAddressError('');
+    if (addressSuccess) setAddressSuccess('');
+  };
 
   // ============================
   // SAVE ADDRESS
   // ============================
-
-  
   const handleSaveAddress = async () => {
-  const {
-    apartment,
-    flat,
-    area,
-    city,
-    state,
-    pincode,
-    landmark,
-  } = addressFields;
+    const { apartment, flat, area, city, state, pincode, landmark } = addressFields;
 
-  // Clear old messages
-  setAddressError('');
-  setAddressSuccess('');
+    setAddressError('');
+    setAddressSuccess('');
 
-  // Validation
-  if (!flat.trim()) {
-    setAddressError('Please enter your flat / house number.');
-    return;
-  }
-
-  if (!area.trim()) {
-    setAddressError('Please enter your area / street.');
-    return;
-  }
-
-  if (!city.trim()) {
-    setAddressError('Please enter your city.');
-    return;
-  }
-
-  if (!pincode.trim()) {
-    setAddressError('Please enter your PIN code.');
-    return;
-  }
-
-  if (!/^\d{6}$/.test(pincode.trim())) {
-    setAddressError('Please enter a valid 6-digit PIN code.');
-    return;
-  }
-
-  // Backend SavedAddressUpdate expects these fields
-  const payload = {
-    building_name: apartment.trim() || 'Not specified',
-    door_number: flat.trim(),
-    area: area.trim(),
-    street: `${city.trim()}, ${state.trim()}`,
-    landmark: landmark.trim() || 'Not specified',
-    pincode: pincode.trim(),
-    latitude: coordinates.latitude,
-    longitude: coordinates.longitude,
-  };
-
-  console.log('ADDRESS PAYLOAD:', payload);
-
-  try {
-    setSavingAddress(true);
-
-    const response = await api.put(
-      '/users/me/address',
-      payload
-    );
-
-    console.log('ADDRESS SAVE RESPONSE:', response.data);
-
-    // Build address for display
-    const completeAddress = [
-      apartment.trim(),
-      flat.trim(),
-      area.trim(),
-      landmark.trim(),
-      city.trim(),
-      state.trim(),
-      pincode.trim(),
-    ]
-      .filter(Boolean)
-      .join(', ');
-
-    setAddress(completeAddress);
-
-    setAddressSuccess('Address saved successfully.');
-
-    setEditingAddress(false);
-
-    // Return to laboratory review if required
-    const returnTo = new URLSearchParams(
-      location.search
-    ).get('returnTo');
-
-    if (returnTo === 'laboratory-review') {
-      navigate('/patient/laboratory/review');
+    if (!flat.trim()) {
+      setAddressError('Please enter your flat / house number.');
+      return;
+    }
+    if (!area.trim()) {
+      setAddressError('Please enter your area / street.');
+      return;
+    }
+    if (!city.trim()) {
+      setAddressError('Please enter your city.');
+      return;
+    }
+    if (!pincode.trim()) {
+      setAddressError('Please enter your PIN code.');
+      return;
+    }
+    if (!/^\d{6}$/.test(pincode.trim())) {
+      setAddressError('Please enter a valid 6-digit PIN code.');
+      return;
     }
 
-  } catch (error) {
-    console.error(
-      'ADDRESS SAVE ERROR:',
-      error.response?.data || error.message
-    );
+    const payload = {
+      building_name: apartment.trim() || 'Not specified',
+      door_number: flat.trim(),
+      area: area.trim(),
+      street: `${city.trim()}, ${state.trim()}`,
+      landmark: landmark.trim() || 'Not specified',
+      pincode: pincode.trim(),
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+    };
 
-    console.error(
-      'STATUS:',
-      error.response?.status
-    );
+    try {
+      setSavingAddress(true);
+      await api.put('/users/me/address', payload);
 
-    console.error(
-      'REQUEST DATA:',
-      error.config?.data
-    );
-
-    const detail = error.response?.data?.detail;
-
-    let message = 'Failed to save address. Please try again.';
-
-    if (Array.isArray(detail)) {
-      message = detail
-        .map((item) => {
-          if (typeof item === 'string') {
-            return item;
-          }
-
-          return item?.msg || 'Invalid address field';
-        })
+      const completeAddress = [
+        apartment.trim(),
+        flat.trim(),
+        area.trim(),
+        landmark.trim(),
+        city.trim(),
+        state.trim(),
+        pincode.trim(),
+      ]
+        .filter(Boolean)
         .join(', ');
-    } else if (typeof detail === 'string') {
-      message = detail;
-    } else if (
-      detail &&
-      typeof detail === 'object'
-    ) {
-      message =
-        detail.msg ||
-        'Invalid address details.';
-    } else if (
-      typeof error.response?.data?.message === 'string'
-    ) {
-      message = error.response.data.message;
+
+      setAddress(completeAddress);
+      setAddressSuccess('Address saved successfully.');
+      setEditingAddress(false);
+
+      const returnTo = new URLSearchParams(location.search).get('returnTo');
+      if (returnTo === 'laboratory-review') {
+        navigate('/patient/laboratory/review');
+      }
+    } catch (error) {
+      console.error('ADDRESS SAVE ERROR:', error.response?.data || error.message);
+      const detail = error.response?.data?.detail;
+      let message = 'Failed to save address. Please try again.';
+
+      if (Array.isArray(detail)) {
+        message = detail.map((item) => (typeof item === 'string' ? item : item?.msg || 'Invalid address field')).join(', ');
+      } else if (typeof detail === 'string') {
+        message = detail;
+      } else if (detail && typeof detail === 'object') {
+        message = detail.msg || 'Invalid address details.';
+      } else if (typeof error.response?.data?.message === 'string') {
+        message = error.response.data.message;
+      }
+      setAddressError(message);
+    } finally {
+      setSavingAddress(false);
     }
-
-    setAddressError(message);
-
-  } finally {
-    setSavingAddress(false);
-  }
-};
-
-  // ============================
-  // CANCEL EDIT
-  // ============================
+  };
 
   const handleCancelEdit = () => {
     setEditingAddress(false);
@@ -410,611 +283,420 @@ const handleAddressFocus = () => {
     setAddressSuccess('');
   };
 
+  // Get Avatar Initials
+  const initials = useMemo(() => {
+    if (!user?.full_name) return 'PT';
+    return user.full_name
+      .split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  }, [user]);
+
   return (
-    <div className="mx-auto max-w-5xl">
-      {/* PAGE HEADER */}
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-slate-900">
-          Profile & Preferences
-        </h1>
-
-        <p className="mt-2 text-base text-slate-600">
-          Manage your health profile, address and accessibility preferences.
-        </p>
-      </div>
-
-      <Card className="space-y-8">
-
-        {/* ============================
-            MEDICAL HEALTH CARD
-        ============================ */}
-
-        <div>
-          <h3 className="mb-4 border-b border-surface-container pb-3 text-2xl font-semibold text-on-surface">
-            Medical Health Card
-          </h3>
-
-          <div className="grid grid-cols-1 gap-5 text-sm sm:grid-cols-2">
-
-            <div>
-              <p className="font-bold text-on-surface-variant">
-                Full Name
-              </p>
-
-              <p className="mt-1 text-base text-on-surface">
-                {user?.full_name || 'Not registered'}
-              </p>
-            </div>
-
-            <div>
-              <p className="font-bold text-on-surface-variant">
-                Registered Email
-              </p>
-
-              <p className="mt-1 text-base text-on-surface">
-                {user?.email || 'Not registered'}
-              </p>
-            </div>
-
-            <div>
-              <p className="font-bold text-on-surface-variant">
-                Contact Phone
-              </p>
-
-              <p className="mt-1 text-base text-on-surface">
-                {user?.profile?.phone || 'Not registered'}
-              </p>
-            </div>
-
-            <div>
-              <p className="font-bold text-on-surface-variant">
-                Date of Birth
-              </p>
-
-              <p className="mt-1 text-base text-on-surface">
-                {user?.profile?.date_of_birth || 'Not registered'}
-              </p>
-            </div>
-
-            <div>
-              <p className="font-bold text-on-surface-variant">
-                Care Subscription Status
-              </p>
-
-              <span className="mt-1 inline-block rounded-full bg-primary-container/20 px-3 py-1 text-xs font-bold capitalize text-primary">
-                {user?.profile?.subscription_status || 'Active'}
+    <div className="max-w-[1500px] mx-auto space-y-8 animate-fade-in p-4 sm:p-6 lg:p-8">
+      
+      {/* 1. PROFILE HERO */}
+      <section className="relative overflow-hidden rounded-3xl border border-[#E5E0D6] bg-gradient-to-br from-[#EEF5F1] via-[#F7F4ED] to-[#EEF5F1]/20 p-6 sm:p-10 lg:p-12 shadow-sm">
+        <div className="relative z-10 flex flex-col sm:flex-row items-center gap-6 sm:gap-8">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-white border border-[#E5E0D6] flex items-center justify-center text-[#1F4B45] text-2xl sm:text-3xl font-black shadow-xs shrink-0 select-none">
+            {initials}
+          </div>
+          <div className="space-y-2 text-center sm:text-left">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#60716E]">Official Medical Card</span>
+            <h1 className="text-3xl font-black tracking-tight text-[#1E2A2B]">{user?.full_name || 'Patient Profile'}</h1>
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 pt-1">
+              <span className="inline-flex px-3 py-0.5 rounded bg-white text-xs font-bold uppercase tracking-wider text-[#1F4B45] border border-[#1F4B45]/15 shadow-xs">
+                {user?.role || 'Patient'}
+              </span>
+              <span className="inline-flex px-3 py-0.5 rounded bg-[#EEF5F1] text-xs font-bold uppercase tracking-wider text-[#1F4B45] border border-[#1F4B45]/10">
+                {user?.profile?.subscription_status || 'Active'} Member
               </span>
             </div>
-
           </div>
         </div>
+      </section>
 
-
-        {/* ============================
-    SAVED ADDRESS
-============================ */}
-
-<div className="border-t border-surface-container pt-8">
-
-  <div className="flex flex-col gap-2">
-    <div className="flex items-center gap-3">
-      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
-        <MapPin size={22} />
-      </div>
-
-      <div>
-        <h3 className="text-2xl font-semibold text-on-surface">
-          Home Address
-        </h3>
-
-        <p className="mt-1 text-sm text-on-surface-variant">
-          Used for home visits and laboratory sample collection.
-        </p>
-      </div>
-    </div>
-  </div>
-
-
-  {/* ============================
-      SAVED ADDRESS DISPLAY
-  ============================ */}
-
-  {!editingAddress && (
-
-    <div className="mt-6">
-
-      {loadingAddress ? (
-
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-          <div className="h-5 w-40 animate-pulse rounded bg-slate-200" />
-          <div className="mt-3 h-4 w-3/4 animate-pulse rounded bg-slate-200" />
-          <div className="mt-2 h-4 w-1/2 animate-pulse rounded bg-slate-200" />
-        </div>
-
-      ) : address ? (
-
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-6">
-
-          <div className="flex items-start justify-between gap-4">
-
-            <div className="flex gap-4">
-
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-600 shadow-sm">
-                <Home size={20} />
+      {/* 2. TWO-COLUMN DETAILS GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* LEFT COLUMN: IDENTITY & ACCOUNT DETAILS */}
+        <div className="lg:col-span-2 space-y-8">
+          
+          {/* PERSONAL INFORMATION */}
+          <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm">
+            <div className="flex items-center gap-3 pb-4 border-b border-[#E5E0D6]/40">
+              <div className="w-10 h-10 rounded-xl bg-[#EEF5F1] flex items-center justify-center border border-[#1F4B45]/10">
+                <User className="w-5 h-5 text-[#1F4B45]" />
               </div>
-
               <div>
-
-                <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
-                  Saved Home Address
-                </p>
-
-                <p className="mt-2 max-w-2xl text-base leading-7 text-slate-700">
-                  {address}
-                </p>
-
+                <h2 className="text-lg font-extrabold text-[#1E2A2B]">Personal Information</h2>
+                <p className="text-xs text-[#60716E]">Your verified personal contact details.</p>
               </div>
-
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setEditingAddress(true);
-                setAddressSuccess('');
-                setAddressError('');
-              }}
-              className="shrink-0 rounded-xl border border-cyan-300 bg-white px-4 py-2 text-sm font-bold text-cyan-700 transition hover:bg-cyan-50"
-            >
-              ✎ Edit
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#60716E] flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-[#1F4B45]/60" /> Full Name
+                </span>
+                <p className="text-sm font-extrabold text-[#1E2A2B]">{user?.full_name || 'Not provided'}</p>
+              </div>
 
-          </div>
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#60716E] flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-[#1F4B45]/60" /> Registered Email
+                </span>
+                <p className="text-sm font-extrabold text-[#1E2A2B] break-all">{user?.email || 'Not provided'}</p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#60716E] flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-[#1F4B45]/60" /> Contact Phone
+                </span>
+                <p className="text-sm font-extrabold text-[#1E2A2B]">{user?.profile?.phone || 'Not provided'}</p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-[#60716E] flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#1F4B45]/60" /> Date of Birth
+                </span>
+                <p className="text-sm font-extrabold text-[#1E2A2B]">{user?.profile?.date_of_birth || 'Not provided'}</p>
+              </div>
+            </div>
+          </section>
+
+          {/* HOME VISIT LOCATION CARD */}
+          <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm">
+            <div className="flex items-center justify-between pb-4 border-b border-[#E5E0D6]/40 gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#EEF5F1] flex items-center justify-center border border-[#1F4B45]/15">
+                  <MapPin className="w-5 h-5 text-[#1F4B45]" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-extrabold text-[#1E2A2B]">Home Visit Location</h2>
+                  <p className="text-xs text-[#60716E]">Used for physical home therapy sessions and lab test collections.</p>
+                </div>
+              </div>
+
+              {!editingAddress && address && !loadingAddress && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingAddress(true);
+                    setAddressSuccess('');
+                    setAddressError('');
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-bold text-[#1F4B45] hover:text-[#1F4B45]/90 bg-[#EEF5F1] hover:bg-[#EEF5F1]/80 rounded-xl border border-[#E5E0D6] transition"
+                >
+                  ✎ Edit Address
+                </button>
+              )}
+            </div>
+
+            {/* DISPLAY ADDRESS */}
+            {!editingAddress && (
+              <div className="space-y-4">
+                {loadingAddress ? (
+                  <div className="flex flex-col items-center justify-center py-10 gap-2">
+                    <Loader2 className="w-6 h-6 animate-spin text-[#1F4B45]" />
+                    <p className="text-xs text-[#60716E]">Loading address details...</p>
+                  </div>
+                ) : address ? (
+                  <div className="rounded-2xl border border-[#E5E0D6] bg-[#F7F4ED]/40 p-5 flex items-start gap-4">
+                    <div className="w-9 h-9 rounded-lg bg-white border border-[#E5E0D6] flex items-center justify-center shrink-0">
+                      <Home className="w-4.5 h-4.5 text-[#1F4B45]" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-[#60716E] block">Saved Home Address</span>
+                      <p className="text-sm font-bold text-[#1E2A2B] mt-1.5 leading-relaxed">{address}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[#E5E0D6] bg-[#F7F4ED]/20 p-8 text-center space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-[#EEF5F1] flex items-center justify-center mx-auto border border-[#E5E0D6]/40">
+                      <MapPin className="w-5.5 h-5.5 text-[#60716E]" />
+                    </div>
+                    <div className="space-y-1">
+                      <h3 className="text-base font-extrabold text-[#1E2A2B]">No Saved Address</h3>
+                      <p className="text-xs text-[#60716E] max-w-sm mx-auto leading-relaxed">
+                        Add your physical home address to configure clinical therapist visits or home test bookings.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={() => {
+                        setEditingAddress(true);
+                        setAddressSuccess('');
+                        setAddressError('');
+                      }}
+                      className="text-xs py-2 px-5 min-h-[44px] shadow-xs font-bold"
+                    >
+                      + Add Home Address
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ADDRESS EDITOR FORM */}
+            {editingAddress && (
+              <div className="space-y-6">
+                
+                {/* Location detection capture */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-[#F7F4ED]/35 p-4 rounded-xl border border-[#E5E0D6]/50">
+                  <div className="space-y-0.5">
+                    <h4 className="text-sm font-bold text-[#1E2A2B]">GPS Geolocation Detection</h4>
+                    <p className="text-xs text-[#60716E]">Autofill fields using your mobile device coordinates.</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={detectCurrentLocation}
+                    disabled={detectingLocation}
+                    className="flex items-center justify-center gap-2 px-4.5 py-2.5 rounded-xl border border-[#E5E0D6] bg-white text-xs font-bold text-[#1F4B45] hover:bg-[#EEF5F1] transition disabled:opacity-50"
+                  >
+                    {detectingLocation ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Detecting...
+                      </>
+                    ) : (
+                      <>
+                        <Navigation className="w-4 h-4" />
+                        Capture GPS Coordinates
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {coordinates.latitude && coordinates.longitude && (
+                  <div className="flex items-center gap-2 p-3.5 bg-[#EEF5F1] text-[#1F4B45] border border-[#1F4B45]/10 rounded-xl text-xs font-medium">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>Coordinates successfully saved ({coordinates.latitude.toFixed(4)}, {coordinates.longitude.toFixed(4)})</span>
+                  </div>
+                )}
+
+                {addressError && (
+                  <div className="flex items-start gap-2 p-3.5 bg-red-50 text-red-700 border border-red-200/50 rounded-xl text-xs font-semibold">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{addressError}</span>
+                  </div>
+                )}
+
+                {addressSuccess && (
+                  <div className="flex items-center gap-2 p-3.5 bg-[#EEF5F1] text-[#1F4B45] border border-[#1F4B45]/10 rounded-xl text-xs font-semibold">
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{addressSuccess}</span>
+                  </div>
+                )}
+
+                {/* Form fields */}
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                  
+                  <div className="sm:col-span-2 space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">Apartment / Building Name</label>
+                    <div className="relative">
+                      <Building2 className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#60716E]" />
+                      <input
+                        type="text"
+                        value={addressFields.apartment}
+                        onChange={(e) => handleAddressChange('apartment', e.target.value)}
+                        placeholder="e.g. Lavender Heights"
+                        className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 pl-10 pr-3 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">Flat / House No. *</label>
+                    <div className="relative">
+                      <Home className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#60716E]" />
+                      <input
+                        type="text"
+                        value={addressFields.flat}
+                        onChange={(e) => handleAddressChange('flat', e.target.value)}
+                        placeholder="e.g. Apartment 4B"
+                        className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 pl-10 pr-3 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">Area / Street *</label>
+                    <div className="relative">
+                      <Map className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#60716E]" />
+                      <input
+                        type="text"
+                        value={addressFields.area}
+                        onChange={(e) => handleAddressChange('area', e.target.value)}
+                        placeholder="e.g. Park Circus Avenue"
+                        className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 pl-10 pr-3 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">City *</label>
+                    <input
+                      type="text"
+                      value={addressFields.city}
+                      onChange={(e) => handleAddressChange('city', e.target.value)}
+                      placeholder="e.g. Nellore"
+                      className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 px-3.5 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">State</label>
+                    <input
+                      type="text"
+                      value={addressFields.state}
+                      onChange={(e) => handleAddressChange('state', e.target.value)}
+                      placeholder="e.g. Andhra Pradesh"
+                      className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 px-3.5 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-[#60716E]">PIN Code *</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={addressFields.pincode}
+                      onChange={(e) => handleAddressChange('pincode', e.target.value.replace(/\D/g, ''))}
+                      placeholder="6-digit PIN code"
+                      className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 px-3.5 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-xs font-bold text-[#60716E]">Landmark <span className="font-normal">(Optional)</span></label>
+                    <div className="relative">
+                      <Landmark className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#60716E]" />
+                      <input
+                        type="text"
+                        value={addressFields.landmark}
+                        onChange={(e) => handleAddressChange('landmark', e.target.value)}
+                        placeholder="e.g. Behind Central Mall"
+                        className="w-full rounded-xl border border-[#E5E0D6] bg-white py-2.5 pl-10 pr-3 text-xs text-[#1E2A2B] outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10 transition font-medium"
+                      />
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Actions */}
+                <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-[#E5E0D6]/40">
+                  <Button
+                    onClick={handleSaveAddress}
+                    disabled={savingAddress}
+                    className="text-xs py-2.5 font-bold"
+                  >
+                    {savingAddress ? 'Saving Address...' : 'Save Location Address'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleCancelEdit}
+                    disabled={savingAddress}
+                    className="text-xs py-2.5 border-[#E5E0D6] bg-white text-[#60716E] hover:text-[#1F4B45] font-bold"
+                  >
+                    Cancel Edit
+                  </Button>
+                </div>
+
+              </div>
+            )}
+          </section>
 
         </div>
 
-      ) : (
-
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-
-          <div className="flex items-start gap-4">
-
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-cyan-600 shadow-sm">
-              <Home size={22} />
+        {/* RIGHT COLUMN: SECURITY, ACCOUNT DETAILS, ACCESSIBILITY */}
+        <div className="space-y-8">
+          
+          {/* MEDICAL ACCOUNT INFORMATION */}
+          <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-5 shadow-sm">
+            <div className="flex items-center gap-3 pb-3 border-b border-[#E5E0D6]/40">
+              <div className="w-9 h-9 rounded-xl bg-[#EEF5F1] flex items-center justify-center border border-[#E5E0D6]/40 shrink-0">
+                <ShieldCheck className="w-5 h-5 text-[#1F4B45]" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm text-[#1E2A2B]">Clinical System Identity</h3>
+                <p className="text-xs text-[#60716E]">Authorized credentials details</p>
+              </div>
             </div>
 
-            <div>
-              <p className="font-semibold text-slate-800">
-                No home address added
-              </p>
+            <div className="space-y-4 text-xs">
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-[#60716E] uppercase tracking-wider block">Authorized Role</span>
+                <span className="font-bold text-[#1E2A2B] block">{user?.role ? user.role.toUpperCase() : 'PATIENT'}</span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-[#60716E] uppercase tracking-wider block">Patient Reference ID</span>
+                <code className="text-xs font-bold text-[#1F4B45] block font-mono bg-gray-50 border border-gray-200/50 p-2 rounded-xl">
+                  {user?.id || 'N/A'}
+                </code>
+              </div>
+              <div className="space-y-1">
+                <span className="text-xs font-bold text-[#60716E] uppercase tracking-wider block">Session Security Status</span>
+                <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-250/20 px-2 py-0.5 rounded text-xs w-fit block">
+                  Active Cryptographic Key
+                </span>
+              </div>
+            </div>
+          </section>
 
-              <p className="mt-1 text-sm leading-6 text-slate-500">
-                Add your home address to enable home visits and sample collection.
+          {/* MEMBERSHIP DESCRIPTION CARD */}
+          <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-4 shadow-sm">
+            <div className="w-10 h-10 rounded-xl bg-[#F7F4ED] border border-[#C9A86A]/20 flex items-center justify-center">
+              <CreditCard className="w-5 h-5 text-[#C9A86A]" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-sm text-[#1E2A2B]">PhysioCare Membership</h4>
+              <p className="text-xs text-[#60716E] mt-1.5 leading-relaxed">
+                As an active recovery subscriber, you get access to personalized physical care pathways, daily therapeutic exercises, clinical milestone trackers, and scheduled therapist reviews.
               </p>
+            </div>
+          </section>
+
+          {/* ACCESSIBILITY DISPLAY SETTINGS */}
+          <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-5 shadow-sm">
+            <div>
+              <h3 className="font-extrabold text-sm text-[#1E2A2B]">Accessibility Settings</h3>
+              <p className="text-xs text-[#60716E]">Configure theme preferences</p>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <div>
+                <p className="text-xs font-bold text-[#1E2A2B]">Visual Theme</p>
+                <p className="text-xs text-[#60716E]">Toggle Dark/Light state</p>
+              </div>
 
               <Button
-                className="mt-4"
-                onClick={() => {
-                  setEditingAddress(true);
-                  setAddressSuccess('');
-                  setAddressError('');
-                }}
+                variant="outline"
+                onClick={toggleTheme}
+                className="flex items-center gap-2 text-xs py-2 min-h-[44px] border-[#E5E0D6] bg-white text-[#60716E] hover:text-[#1F4B45] font-bold shrink-0"
               >
-                + Add Home Address
+                {theme === 'light' ? (
+                  <>
+                    <Moon className="w-4 h-4 text-[#1F4B45]" />
+                    <span>Dark Mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Sun className="w-4 h-4 text-[#C9A86A]" />
+                    <span>Light Mode</span>
+                  </>
+                )}
               </Button>
             </div>
-
-          </div>
-
-        </div>
-
-      )}
-
-    </div>
-
-  )}
-
-
-  {/* ============================
-      ADDRESS EDITOR
-  ============================ */}
-
-  {editingAddress && (
-
-    <div className="mt-6 rounded-3xl border border-cyan-200 bg-gradient-to-br from-cyan-50/70 to-white p-6">
-
-      {/* HEADER */}
-
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
-        <div>
-
-          <p className="text-xs font-bold uppercase tracking-wider text-cyan-700">
-            Delivery / Visit Location
-          </p>
-
-          <h4 className="mt-1 text-xl font-bold text-slate-900">
-            Add your home address
-          </h4>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Use your current location or enter your address manually.
-          </p>
-
-        </div>
-
-
-        {/* DETECT LOCATION */}
-
-        <button
-          type="button"
-          onClick={detectCurrentLocation}
-          disabled={detectingLocation}
-          className="flex items-center justify-center gap-2 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-
-          {detectingLocation ? (
-            <>
-              <Loader2
-                size={18}
-                className="animate-spin"
-              />
-
-              Detecting location...
-            </>
-          ) : (
-            <>
-              <Navigation size={18} />
-
-              Use Current Location
-            </>
-          )}
-
-        </button>
-
-      </div>
-
-
-      {/* LOCATION DETECTED */}
-
-      {coordinates.latitude && coordinates.longitude && (
-
-        <div className="mt-5 flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-
-          <CheckCircle2
-            size={20}
-            className="text-emerald-600"
-          />
-
-          <div>
-            <p className="text-sm font-bold text-emerald-700">
-              Location detected
-            </p>
-
-            <p className="text-xs text-emerald-600">
-              Address details were filled using your current location.
-            </p>
-          </div>
-
-        </div>
-
-      )}
-
-
-      {/* ERROR */}
-
-      {addressError && (
-
-        <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
-          {addressError}
-        </div>
-
-      )}
-
-
-      {/* SUCCESS */}
-
-      {addressSuccess && (
-
-        <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-          {addressSuccess}
-        </div>
-
-      )}
-
-
-      {/* ============================
-          ADDRESS FIELDS
-      ============================ */}
-
-      <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
-
-
-        {/* APARTMENT */}
-
-        <div className="sm:col-span-2">
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            Apartment / Building Name
-          </label>
-
-          <div className="relative">
-
-            <Building2
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-
-            <input
-              type="text"
-              value={addressFields.apartment}
-              onChange={(e) =>
-                handleAddressChange(
-                  'apartment',
-                  e.target.value
-                )
-              }
-              placeholder="e.g. lotusin appartments"
-              className="w-full rounded-xl border border-slate-300 bg-white py-3.5 pl-11 pr-4 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-            />
-
-          </div>
-
-        </div>
-
-
-        {/* FLAT NUMBER */}
-
-        <div>
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            Flat / House No. *
-          </label>
-
-          <div className="relative">
-
-            <Home
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-
-            <input
-              type="text"
-              value={addressFields.flat}
-              onChange={(e) =>
-                handleAddressChange(
-                  'flat',
-                  e.target.value
-                )
-              }
-              placeholder="e.g. Flat 302"
-              className="w-full rounded-xl border border-slate-300 bg-white py-3.5 pl-11 pr-4 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-            />
-
-          </div>
-
-        </div>
-
-
-        {/* AREA */}
-
-        <div>
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            Area / Street *
-          </label>
-
-          <div className="relative">
-
-            <Map
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-
-            <input
-              type="text"
-              value={addressFields.area}
-              onChange={(e) =>
-                handleAddressChange(
-                  'area',
-                  e.target.value
-                )
-              }
-              placeholder="e.g. Magunta Layout"
-              className="w-full rounded-xl border border-slate-300 bg-white py-3.5 pl-11 pr-4 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-            />
-
-          </div>
-
-        </div>
-
-
-        {/* CITY */}
-
-        <div>
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            City *
-          </label>
-
-          <input
-            type="text"
-            value={addressFields.city}
-            onChange={(e) =>
-              handleAddressChange(
-                'city',
-                e.target.value
-              )
-            }
-            placeholder="e.g. Nellore"
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-          />
-
-        </div>
-
-
-        {/* STATE */}
-
-        <div>
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            State
-          </label>
-
-          <input
-            type="text"
-            value={addressFields.state}
-            onChange={(e) =>
-              handleAddressChange(
-                'state',
-                e.target.value
-              )
-            }
-            placeholder="e.g. Andhra Pradesh"
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-          />
-
-        </div>
-
-
-        {/* PINCODE */}
-
-        <div>
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            PIN Code *
-          </label>
-
-          <input
-            type="text"
-            inputMode="numeric"
-            maxLength={6}
-            value={addressFields.pincode}
-            onChange={(e) =>
-              handleAddressChange(
-                'pincode',
-                e.target.value.replace(/\D/g, '')
-              )
-            }
-            placeholder="6-digit PIN code"
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-          />
-
-        </div>
-
-
-        {/* LANDMARK */}
-
-        <div className="sm:col-span-2">
-
-          <label className="mb-2 block text-sm font-bold text-slate-700">
-            Landmark
-            <span className="ml-1 font-normal text-slate-400">
-              (Optional)
-            </span>
-          </label>
-
-          <div className="relative">
-
-            <Landmark
-              size={19}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-
-            <input
-              type="text"
-              value={addressFields.landmark}
-              onChange={(e) =>
-                handleAddressChange(
-                  'landmark',
-                  e.target.value
-                )
-              }
-              placeholder="e.g. Near Nellore Railway Station"
-              className="w-full rounded-xl border border-slate-300 bg-white py-3.5 pl-11 pr-4 text-sm outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
-            />
-
-          </div>
+          </section>
 
         </div>
 
       </div>
 
-
-      {/* ACTIONS */}
-
-      <div className="mt-7 flex flex-col gap-3 border-t border-cyan-100 pt-6 sm:flex-row">
-
-        <Button
-          onClick={handleSaveAddress}
-          disabled={savingAddress}
-          className="min-w-[160px]"
-        >
-          {savingAddress
-            ? 'Saving...'
-            : 'Save Address'}
-        </Button>
-
-        <Button
-          variant="outline"
-          onClick={handleCancelEdit}
-          disabled={savingAddress}
-        >
-          Cancel
-        </Button>
-
-      </div>
-
-    </div>
-
-  )}
-
-</div>
-
-
-        {/* ============================
-            ACCESSIBILITY SETTINGS
-        ============================ */}
-
-        <div className="border-t border-surface-container pt-6">
-
-          <h3 className="mb-4 text-2xl font-semibold text-on-surface">
-            Accessibility Settings
-          </h3>
-
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-
-            <div>
-              <p className="font-semibold text-on-surface">
-                Color Theme
-              </p>
-
-              <p className="text-xs text-on-surface-variant">
-                Toggle dark/light background display
-              </p>
-            </div>
-
-            <Button
-              variant="outline"
-              onClick={toggleTheme}
-              className="flex items-center gap-2"
-            >
-              <span className="material-symbols-outlined">
-                {theme === 'light'
-                  ? 'dark_mode'
-                  : 'light_mode'}
-              </span>
-
-              {theme === 'light'
-                ? 'Dark Mode'
-                : 'Light Mode'}
-            </Button>
-
-          </div>
-
-        </div>
-
-      </Card>
     </div>
   );
 }

@@ -43,3 +43,9 @@ class ProfileRepository:
     @staticmethod
     async def list_patients() -> List[Patient]:
         return await Patient.find().to_list()
+
+    @staticmethod
+    async def list_patients_by_doctor_id(doctor_id: str) -> List[Patient]:
+        return await Patient.find(
+            Patient.primary_doctor_id == PydanticObjectId(doctor_id)
+        ).to_list()

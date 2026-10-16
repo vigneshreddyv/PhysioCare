@@ -249,3 +249,18 @@ dump/
 # Generated uploads
 uploads/
 media/CLAUDE.md
+
+# --- Handoff exclusions (local machine / tool state) ---
+# AI-agent local config (may contain API tokens — NEVER commit)
+.claude/
+.freebuff/
+
+# Generated QA artifacts
+frontend/qa/screenshots/
+frontend/qa/audit-report.json
+
+# One-off scratch/debug scripts
+frontend/debug.cjs
+frontend/verify.cjs
+frontend/verify.js
+frontend/answer.txt

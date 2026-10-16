@@ -7,9 +7,9 @@ export default function Card({
   onClick,
   ...props
 }) {
-  const baseStyles = 'bg-surface-container-lowest rounded-xl border border-surface-container shadow-sm p-6 overflow-hidden';
-  const hoverStyles = hoverable 
-    ? 'hover:-translate-y-0.5 hover:shadow-[0px_6px_24px_rgba(0,123,167,0.08)] transition-all duration-300' 
+  const baseStyles = 'bg-cream rounded-xl border border-border shadow-sm p-6 overflow-hidden';
+  const hoverStyles = hoverable
+    ? 'hover:-translate-y-0.5 hover:shadow-[0px_6px_24px_rgba(15,107,99,0.08)] transition-all duration-300'
     : '';
   const clickStyles = onClick ? 'cursor-pointer' : '';
 

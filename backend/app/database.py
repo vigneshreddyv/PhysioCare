@@ -5,6 +5,14 @@ from app.models.user import User
 from app.models.patient import Patient
 from app.models.doctor import Doctor
 from app.models.appointment import Appointment
+from app.models.laboratory_test import LaboratoryTest
+from app.models.laboratory_booking import LaboratoryBooking
+from app.models.notification import Notification
+from app.models.webhook_event import WebhookEvent
+from app.models.payment_refund import PaymentRefund
+from app.models.report import Report
+from app.models.care_plan import CarePlan, CarePlanHistory
+from app.models.exercise import Exercise, ExerciseAssignment, ExerciseProgress
 
 # Custom client subclass to ensure compatibility between Beanie 2.1.0 and Motor 3.6+ / PyMongo 4.9+
 # PyMongo 4.9+ removed append_metadata, which Beanie 2.1.0 internally tries to call.
@@ -22,5 +30,16 @@ async def init_db():
             Patient,
             Doctor,
             Appointment,
+            LaboratoryTest,
+            LaboratoryBooking,
+            Notification,
+            Report,
+            CarePlan,
+            CarePlanHistory,
+            Exercise,
+            ExerciseAssignment,
+            ExerciseProgress,
+            WebhookEvent,
+            PaymentRefund,
         ]
     )

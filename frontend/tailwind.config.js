@@ -54,7 +54,13 @@ export default {
         "surface-container-high": "#dfe9fa",
         "tertiary-container": "#6b7479",
         "on-primary-fixed-variant": "#004c69",
-        "surface-bright": "#f8f9ff"
+        "surface-bright": "#f8f9ff",
+        "navy": "#1B3A4B",
+        "teal": "#1F4B45",
+        "cream": "#FAF8F4",
+        "muted": "#5B6B69",
+        "border": "#EAE6DD",
+        "white": "#FFFFFF"
       },
       borderRadius: {
         "DEFAULT": "0.25rem",

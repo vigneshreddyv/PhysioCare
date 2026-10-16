@@ -4,9 +4,18 @@ const ThemeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
+    // Check if user explicitly selected a theme preference in settings
+    const userSelected = localStorage.getItem('theme_user_selected');
+    if (userSelected === 'dark' || userSelected === 'light') {
+      return userSelected;
+    }
+    // Clean up any stale auto-persisted dark theme from the previous matchMedia bug
     const saved = localStorage.getItem('theme');
-    if (saved) return saved;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    if (saved === 'dark' && !userSelected) {
+      localStorage.setItem('theme', 'light');
+    }
+    // The approved default presentation for PhysioCare is ALWAYS light mode
+    return 'light';
   });
 
   useEffect(() => {
@@ -17,11 +26,22 @@ export function ThemeProvider({ children }) {
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+    setTheme((prev) => {
+      const next = prev === 'light' ? 'dark' : 'light';
+      localStorage.setItem('theme_user_selected', next);
+      return next;
+    });
+  };
+
+  const setExplicitTheme = (newTheme) => {
+    if (newTheme === 'light' || newTheme === 'dark') {
+      localStorage.setItem('theme_user_selected', newTheme);
+      setTheme(newTheme);
+    }
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme: setExplicitTheme }}>
       {children}
     </ThemeContext.Provider>
   );

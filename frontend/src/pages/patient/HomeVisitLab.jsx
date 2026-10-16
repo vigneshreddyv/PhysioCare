@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
+import { setState } from './laboratoryStorageUtils';
+import { ArrowRight } from 'lucide-react';
 
 export default function HomeVisitLab() {
   const navigate = useNavigate();
@@ -8,7 +10,6 @@ export default function HomeVisitLab() {
   const [savedAddress, setSavedAddress] = useState(null);
   const [loadingAddress, setLoadingAddress] = useState(true);
   const [useSavedAddress, setUseSavedAddress] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   const [addressDetails, setAddressDetails] = useState({
     building_name: '',
@@ -32,6 +33,19 @@ export default function HomeVisitLab() {
         if (response.data) {
           setSavedAddress(response.data);
           setUseSavedAddress(true);
+          // Store the address in our laboratory booking state
+          const address = response.data;
+          const formattedAddress = [
+            address.building_name,
+            address.door_number,
+            address.area,
+            address.street,
+            address.landmark,
+            address.pincode,
+          ]
+            .filter(Boolean)
+            .join(', ');
+          setState({ savedAddress: formattedAddress });
         }
       } catch (error) {
         if (error.response?.status !== 404) {
@@ -82,49 +96,6 @@ export default function HomeVisitLab() {
     }));
   };
 
-  const handleContinue = async () => {
-    if (useSavedAddress && savedAddress) {
-      navigate('/patient/laboratory/tests', {
-        state: {
-          address: savedAddress,
-          visitType: 'home',
-        },
-      });
-
-      return;
-    }
-
-    if (
-      !addressDetails.building_name.trim() ||
-      !addressDetails.door_number.trim() ||
-      !addressDetails.area.trim() ||
-      !addressDetails.street.trim() ||
-      !addressDetails.landmark.trim() ||
-      !addressDetails.pincode.trim()
-    ) {
-      alert('Please complete all address fields.');
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      const response = await api.put('/users/me/address', addressDetails);
-
-      navigate('/patient/laboratory/tests', {
-        state: {
-          address: response.data.saved_address,
-          visitType: 'home',
-        },
-      });
-    } catch (error) {
-      console.error('Failed to save address:', error);
-      alert('Unable to save your address. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const formatSavedAddress = (address) => {
     if (!address) return '';
 
@@ -141,217 +112,234 @@ export default function HomeVisitLab() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl">
-      {/* Header */}
-      <div className="mb-8">
-        <p className="text-sm font-semibold text-emerald-700">
-          HOME VISIT LAB TEST
-        </p>
-
-        <h1 className="mt-2 text-3xl font-bold text-slate-900 sm:text-4xl">
-          Home Sample Collection
-        </h1>
-
-        <p className="mt-3 max-w-2xl text-base text-slate-600">
-          Our lab assistant can visit your home to collect samples for your
-          selected laboratory tests.
-        </p>
-      </div>
-
-      {/* Location */}
-      <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-bold text-slate-900">
-          Check home-visit availability
-        </h2>
-
-        <p className="mt-1 text-sm text-slate-500">
-          Allow location access so we can check whether home sample collection
-          is available in your area.
-        </p>
-
-        <button
-          type="button"
-          onClick={handleLocation}
-          className="mt-5 rounded-xl bg-cyan-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-700"
-        >
-          {locationStatus === 'loading'
-            ? 'Getting Location...'
-            : 'Use My Current Location'}
-        </button>
-
-        {locationStatus === 'success' && (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="font-semibold text-emerald-700">
-              ✓ Location captured
-            </p>
-
-            <p className="mt-1 text-sm text-emerald-600">
-              Your current location has been detected successfully.
-            </p>
-          </div>
-        )}
-
-        {locationError && (
-          <p className="mt-3 text-sm text-red-600">
-            {locationError}
+    <div className="min-h-screen bg-[#F7F4ED] px-4 py-12">
+      <div className="mx-auto max-w-4xl">
+        {/* Header */}
+        <div className="mb-8">
+          <p className="text-sm font-semibold uppercase tracking-wider text-[#60716E]">
+            LABORATORY CARE
           </p>
-        )}
-      </div>
 
-      {/* Saved Address */}
-      {!loadingAddress && savedAddress && (
-        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
-          <div className="flex items-start gap-3">
-            <div className="text-2xl">✓</div>
+          <h1 className="mt-2 text-3xl font-bold text-[#1E2A2B] sm:text-4xl">
+            Home Sample Collection
+          </h1>
 
-            <div className="flex-1">
-              <h2 className="font-bold text-emerald-800">
-                Saved Address
-              </h2>
+          <p className="mt-3 max-w-2xl text-base text-[#60716E]">
+            Our lab assistant can visit your home to collect samples for your
+            selected laboratory tests.
+          </p>
+        </div>
 
-              <p className="mt-2 text-sm leading-6 text-emerald-700">
-                {formatSavedAddress(savedAddress)}
+        {/* Location */}
+        <div className="mb-6 rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-6">
+          <h2 className="text-lg font-bold text-[#1E2A2B]">
+            Check home-visit availability
+          </h2>
+
+          <p className="mt-1 text-sm text-[#60716E]">
+            Allow location access so we can check whether home sample collection
+            is available in your area.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleLocation}
+            className="mt-5 w-full rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-6 text-sm font-semibold text-[#1F4B45] hover:bg-[#F7F4ED]/70 transition-colors duration-200 flex items-center justify-center gap-2"
+          >
+            {locationStatus === 'loading'
+              ? 'Getting Location...'
+              : useSavedAddress
+                ? 'Change Location'
+                : 'Use My Current Location'}
+            <ArrowRight className="w-4 h-4" />
+          </button>
+
+          {locationStatus === 'success' && (
+            <div className="mt-4 rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-4">
+              <p className="font-semibold text-[#1E2A2B]">
+                ✓ Location captured
               </p>
 
-              <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={useSavedAddress}
-                  onChange={(event) =>
-                    setUseSavedAddress(event.target.checked)
-                  }
-                  className="h-4 w-4"
-                />
-
-                Use this saved address
-              </label>
+              <p className="mt-1 text-sm text-[#60716E]">
+                Your current location has been detected successfully.
+              </p>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* New Address */}
-      {!useSavedAddress && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-slate-900">
-              Enter Address
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              This address will be saved for your future home lab visits.
+          {locationError && (
+            <p className="mt-3 text-sm text-[#60716E]">
+              {locationError}
             </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Building / House Name
-              </label>
-
-              <input
-                name="building_name"
-                value={addressDetails.building_name}
-                onChange={handleAddressChange}
-                placeholder="Sree Ram Building"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Door / Flat Number
-              </label>
-
-              <input
-                name="door_number"
-                value={addressDetails.door_number}
-                onChange={handleAddressChange}
-                placeholder="42"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Area / Locality
-              </label>
-
-              <input
-                name="area"
-                value={addressDetails.area}
-                onChange={handleAddressChange}
-                placeholder="Vijayalakshmi Nagar"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Street
-              </label>
-
-              <input
-                name="street"
-                value={addressDetails.street}
-                onChange={handleAddressChange}
-                placeholder="5th Street"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Landmark
-              </label>
-
-              <input
-                name="landmark"
-                value={addressDetails.landmark}
-                onChange={handleAddressChange}
-                placeholder="Near Vowel 14 School"
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-slate-700">
-                Pincode
-              </label>
-
-              <input
-                name="pincode"
-                value={addressDetails.pincode}
-                onChange={handleAddressChange}
-                placeholder="524004"
-                maxLength={6}
-                className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-cyan-500"
-              />
-            </div>
-          </div>
-
-          <label className="mt-5 flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked
-              readOnly
-              className="h-4 w-4"
-            />
-
-            Save this address for future home laboratory bookings
-          </label>
+          )}
         </div>
-      )}
 
-      {/* Continue */}
-      <div className="mt-6 flex justify-end">
-        <button
+        {/* Saved Address */}
+        {!loadingAddress && savedAddress && (
+          <div className="mb-6 rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#EEF5F1]">
+                <span className="w-6 h-6 text-[#1F4B45]">✓</span>
+              </div>
+
+              <div className="flex-1">
+                <h2 className="font-bold text-[#1E2A2B]">
+                  Saved Address
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-[#60716E]">
+                  {formatSavedAddress(savedAddress)}
+                </p>
+
+                <label className="mt-4 flex min-h-[44px] cursor-pointer items-center gap-2 text-sm font-semibold text-[#60716E]">
+                  <input
+                    type="checkbox"
+                    checked={useSavedAddress}
+                    onChange={(event) =>
+                      setUseSavedAddress(event.target.checked)
+                    }
+                    className="h-4 w-4"
+                  />
+
+                  Use this saved address
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* New Address */}
+        {!useSavedAddress && (
+          <div className="rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-6">
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-[#1E2A2B]">
+                Enter Address
+              </h2>
+
+              <p className="mt-1 text-sm text-[#60716E]">
+                This address will be saved for your future home lab visits.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Building / House Name
+                </label>
+
+                <input
+                  name="building_name"
+                  value={addressDetails.building_name}
+                  onChange={handleAddressChange}
+                  placeholder="Sree Ram Building"
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Door / Flat Number
+                </label>
+
+                <input
+                  name="door_number"
+                  value={addressDetails.door_number}
+                  onChange={handleAddressChange}
+                  placeholder="42"
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Area / Locality
+                </label>
+
+                <input
+                  name="area"
+                  value={addressDetails.area}
+                  onChange={handleAddressChange}
+                  placeholder="Vijayalakshmi Nagar"
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Street
+                </label>
+
+                <input
+                  name="street"
+                  value={addressDetails.street}
+                  onChange={handleAddressChange}
+                  placeholder="5th Street"
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Landmark
+                </label>
+
+                <input
+                  name="landmark"
+                  value={addressDetails.landmark}
+                  onChange={handleAddressChange}
+                  placeholder="Near Vowel 14 School"
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#60716E]">
+                  Pincode
+                </label>
+
+                <input
+                  name="pincode"
+                  value={addressDetails.pincode}
+                  onChange={handleAddressChange}
+                  placeholder="524004"
+                  maxLength={6}
+                  className="w-full rounded-xl border border-[#E5E0D6]/50 bg-white px-4 py-3 outline-none focus:border-[#1F4B45]/70 focus:ring-[#1F4B45]/20"
+                />
+              </div>
+            </div>
+
+            <label className="mt-5 flex min-h-[44px] items-center gap-2 text-sm text-[#60716E]">
+              <input
+                type="checkbox"
+                checked
+                readOnly
+                className="h-4 w-4"
+              />
+
+              Save this address for future home laboratory bookings
+            </label>
+          </div>
+        )}
+
+        {/* Continue */}
+        <div className="mt-6 flex justify-end">
+          <button
             type="button"
-            onClick={() => navigate('/patient/laboratory/tests')}
-            className="rounded-xl bg-cyan-600 px-6 py-3 text-sm font-bold text-white transition hover:bg-cyan-700"
-        >
+            onClick={() => {
+              let addressToStore = '';
+              if (useSavedAddress) {
+                addressToStore = formatSavedAddress(savedAddress);
+              } else {
+                addressToStore = formatSavedAddress(addressDetails);
+              }
+              setState({ visitType: 'home', savedAddress: addressToStore });
+              navigate('/patient/laboratory/tests');
+            }}
+            className="mt-6 w-full rounded-2xl border border-[#E5E0D6]/50 bg-[#F7F4ED]/50 p-6 text-sm font-semibold text-[#1F4B45] hover:bg-[#F7F4ED]/70 transition-colors duration-200 flex items-center justify-center gap-2"
+          >
             Continue to Laboratory Tests →
-        </button>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
     </div>
   );

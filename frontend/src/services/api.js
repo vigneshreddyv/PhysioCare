@@ -83,9 +83,16 @@ api.interceptors.response.use(
       }
 
       try {
-        const response = await api.post('/auth/refresh', {
-          refresh_token: refreshToken,
-        });
+        // `_retry` ensures THIS refresh call's own 401 cannot re-enter the
+        // refresh branch and queue itself into failedQueue (which would
+        // deadlock: processQueue only runs once this await settles).
+        const response = await api.post(
+          '/auth/refresh',
+          {
+            refresh_token: refreshToken,
+          },
+          { _retry: true }
+        );
 
         const {
           access_token,

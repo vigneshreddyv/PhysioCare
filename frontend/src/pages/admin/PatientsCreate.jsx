@@ -4,8 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
-import Skeleton from '../../components/common/Skeleton';
-import ErrorState from '../../components/common/ErrorState';
 
 export default function PatientsCreate() {
   const navigate = useNavigate();

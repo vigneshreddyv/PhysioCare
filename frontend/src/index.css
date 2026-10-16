@@ -6,11 +6,24 @@
 
 @layer base {
   body {
-    background-color: theme('colors.background');
-    color: theme('colors.on-surface');
+    background-color: #F6F2EA;
+    color: #1E2A2B;
     font-family: 'Inter', sans-serif;
     -webkit-tap-highlight-color: transparent;
   }
+}
+
+/* Exercise category filter — right-edge fade affordance (hidden once all chips are scrolled into view) */
+.filter-fade-right {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  background: linear-gradient(to left, rgba(246, 242, 234, 0.95), rgba(246, 242, 234, 0));
+}
+.dark .filter-fade-right {
+  background: linear-gradient(to left, rgba(24, 24, 27, 0.95), rgba(24, 24, 27, 0));
+}
+.filter-scroll:not(.at-end) + .filter-fade-right {
+  opacity: 1;
 }
 
 /* Custom scrollbar for horizontal scrolling elements */
@@ -25,25 +38,25 @@
 /* react-day-picker customization to match Stitch styling */
 .rdp {
   --rdp-cell-size: 40px;
-  --rdp-accent-color: #006184; /* theme('colors.primary') */
-  --rdp-background-color: #c4e7ff; /* theme('colors.primary-fixed') */
+  --rdp-accent-color: #1F4B45; /* Clinical Warmth deep pine teal */
+  --rdp-background-color: #EEF5F1; /* Clinical Warmth soft sage */
   margin: 0;
   font-family: 'Inter', sans-serif;
 }
 
 .rdp-day_selected, .rdp-day_selected:hover {
-  background-color: #006184 !important; /* theme('colors.primary') */
-  color: #ffffff !important; /* theme('colors.on-primary') */
+  background-color: #1F4B45 !important; /* Clinical Warmth deep pine teal */
+  color: #ffffff !important;
   border-radius: 9999px;
 }
 
 .rdp-day:hover:not(.rdp-day_selected):not(.rdp-day_disabled) {
-  background-color: #eef4ff !important; /* theme('colors.surface-container-low') */
+  background-color: #EEF5F1 !important; /* Clinical Warmth soft sage */
   border-radius: 9999px;
 }
 
 .rdp-day_today {
   font-weight: bold;
-  border: 1px solid #006184;
+  border: 1px solid #1F4B45;
   border-radius: 9999px;
 }

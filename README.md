@@ -209,6 +209,120 @@ Patients receive benefits such as:
 
 ---
 
+# 💻 Local Development Setup
+
+The active codebase lives in `backend/` (FastAPI) and `frontend/` (React + Vite). The `apps/` portals are legacy placeholders and are not part of the current build.
+
+## Prerequisites
+
+- **Node.js** 20.19+ or 22.12+ (tested with v26) and **npm** 10+
+- **Python** 3.13 (tested with 3.13.5)
+- **MongoDB** — a local MongoDB instance or a MongoDB Atlas cluster
+- **Git**
+
+## 1. Clone and check out the development branch
+
+```bash
+git clone https://github.com/vigneshreddyv/PhysioCare.git
+cd PhysioCare
+git checkout feature/auth-and-patient-ui
+```
+
+## 2. Backend setup (FastAPI — port 8000)
+
+```bash
+cd backend
+python -m venv venv
+```
+
+Activate the virtual environment:
+
+```bash
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+```
+
+Install dependencies and create the local environment file:
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # Windows: copy .env.example .env
+```
+
+Edit `.env` and set your own values. **Never commit `.env`** (it is gitignored) and never reuse real production secrets in development:
+
+| Variable | Where to get the value |
+| --- | --- |
+| `MONGODB_URL` | Your local MongoDB (`mongodb://localhost:27017`) or your MongoDB Atlas connection string |
+| `DATABASE_NAME` | Any local database name, e.g. `physiocare` |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | Generate random strings; the values in `.env.example` are placeholders and must be replaced |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay Dashboard → Settings → API Keys (**test mode** keys) |
+| `RAZORPAY_WEBHOOK_SECRET` | Razorpay Dashboard → Settings → Webhooks (only needed to test webhooks locally) |
+| `PAYMENT_RECONCILIATION_ENABLED`, `REFUND_RECONCILIATION_ENABLED` | Leave `false` — no automatic expiry/reconciliation policy is approved by default |
+
+Optional seed scripts (populate doctors, patients, and the laboratory test catalogue):
+
+```bash
+python seed.py
+python seed_laboratory_tests.py
+```
+
+Start the backend:
+
+```bash
+python run.py
+# API + docs at http://localhost:8000 (OpenAPI at /docs)
+```
+
+## 3. Frontend setup (React + Vite — port 5173)
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # Windows: copy .env.example .env
+```
+
+`.env` contains only the API endpoint (safe placeholder default):
+
+```env
+VITE_API_URL=http://localhost:8000/api
+```
+
+Start the dev server:
+
+```bash
+npm run dev
+# App at http://localhost:5173
+```
+
+> CORS note: the backend currently allows origins `http://localhost:5173`, `http://127.0.0.1:5173` and a LAN address. If you serve the frontend from a different host/port on the new machine, add that origin to `allow_origins` in `backend/app/main.py`.
+
+## 4. Tests, lint, and build
+
+```bash
+# Backend test suite (677 tests, no database or network required)
+cd backend
+python -m pytest tests/ -q
+
+# Frontend lint and production build
+cd frontend
+npm run lint
+npm run build
+```
+
+Frontend QA harness scripts live in `frontend/qa/` (Puppeteer-based; they require the frontend dev server and a running backend to be useful).
+
+## 5. Configure separately on each machine (NOT in Git)
+
+- `backend/.env` — MongoDB credentials, JWT secrets, Razorpay keys/webhook secret
+- `frontend/.env` — API URL
+- A MongoDB database with seed data (Git does **not** transfer database contents)
+- Razorpay **test** credentials from your Razorpay account
+
+---
+
 # 📂 Project Structure
 
 ```text

@@ -1,6 +1,6 @@
 import { physioProblems } from '../../data/physioProblems';
 import { physioSymptoms } from '../../data/physioSymptoms';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { DayPicker } from 'react-day-picker';
@@ -13,11 +13,9 @@ import {
   Clock3,
   Home,
   Laptop,
-  MapPin,
   Microscope,
   Stethoscope,
   ClipboardList,
-  Activity,
   Dumbbell,
   CreditCard,
   Banknote,
@@ -26,6 +24,8 @@ import {
 } from 'lucide-react';
 
 import api from '../../services/api';
+import { openRazorpayCheckout } from '../../services/razorpayCheckout';
+import { useAuth } from '../../context/useAuth';
 import DoctorCard from '../../components/features/DoctorCard';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
@@ -107,6 +107,7 @@ const painLevels = [
 export default function BookAppointment() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const [step, setStep] = useState(1);
 
@@ -118,7 +119,23 @@ export default function BookAppointment() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTime, setSelectedTime] = useState('');
 
-  const [reason, setReason] = useState('');
+  const [submitLock, setSubmitLock] = useState(false);
+  const submitLockRef = useRef(false);
+
+  // --- Razorpay checkout state (Task 3) ---
+  // The created appointment (for online payments we must know its id to
+  // request the backend Razorpay order).
+  const [createdAppointment, setCreatedAppointment] = useState(null);
+  // Checkout lifecycle: 'idle' | 'processing' | 'verifying'
+  const [checkoutState, setCheckoutState] = useState('idle');
+  const [checkoutError, setCheckoutError] = useState(null);
+  // Holds the raw Razorpay payment response (payment id, order id,
+  // signature) purely for the NEXT verification task. NOT proof of payment.
+  const [razorpayPaymentResponse, setRazorpayPaymentResponse] = useState(null);
+
+  // Single authoritative price source for both the Consultation and Total
+  // rows. The backend stores this same doctor fee as billing_amount.
+  const consultationFee = selectedDoctor?.consultation_fee ?? 0;
   const [selectedSymptoms, setSelectedSymptoms] = useState([]);
   const [customSymptoms, setCustomSymptoms] = useState('');
   const [durationDays, setDurationDays] = useState('');
@@ -301,12 +318,24 @@ const handleAddressChange = (field, value) => {
       return response.data;
     },
 
-    onSuccess: () => {
+    onSuccess: async (appointment) => {
       queryClient.invalidateQueries({
         queryKey: ['appointments'],
       });
 
-      setModalOpen(true);
+      if (appointment.payment_method === 'online') {
+        // ONLINE: the appointment is created as pending_payment. Now hand the
+        // patient to Razorpay Checkout using backend-authoritative values.
+        setCreatedAppointment(appointment);
+        setCheckoutState('processing');
+        await startAppointmentCheckout(appointment);
+        // Lock release happens in the checkout lifecycle handlers.
+      } else {
+        // OFFLINE: unchanged existing behavior — show the confirmation modal.
+        setSubmitLock(false);
+        submitLockRef.current = false;
+        setModalOpen(true);
+      }
     },
 
     onError: (err) => {
@@ -314,8 +343,124 @@ const handleAddressChange = (field, value) => {
         'Failed to book appointment:',
         err.response?.data || err.message
       );
+
+      // Allow the patient to retry immediately after a failed attempt.
+      setSubmitLock(false);
+      submitLockRef.current = false;
     },
   });
+
+  const startAppointmentCheckout = async (appointment) => {
+    try {
+      // 1. Backend creates/reuses the Razorpay order. The frontend never
+      //    computes or submits an amount.
+      const orderResponse = await api.post(
+        `/appointments/${appointment.id}/payment/order`,
+        {}
+      );
+      const { key_id, order_id, amount, currency } = orderResponse.data;
+
+      // 2. Open Checkout with the backend values, unchanged.
+      //    Checkout success is NOT backend-confirmed payment: the response is
+      //    captured for the next verification task only. The appointment
+      //    stays status=pending_payment until the backend verifies.
+      await openRazorpayCheckout({
+        keyId: key_id,
+        orderId: order_id,
+        amount,
+        currency,
+        description: `PhysioCare appointment · ${appointment.service_type?.replace(/_/g, ' ') || 'consultation'}`,
+        prefill: {
+          name: user?.full_name || '',
+          email: user?.email || '',
+        },
+        onSuccess: (paymentResponse) => {
+          // Capture the Checkout response, then let the BACKEND verify it.
+          // Checkout success is NOT treated as paid here: the appointment
+          // stays pending_payment until POST /payment/verify succeeds and
+          // the backend-confirmed response arrives.
+          const captured = {
+            razorpay_payment_id: paymentResponse.razorpay_payment_id || null,
+            razorpay_order_id: paymentResponse.razorpay_order_id || order_id,
+            razorpay_signature: paymentResponse.razorpay_signature || null,
+            appointment_id: appointment.id,
+          };
+          setRazorpayPaymentResponse(captured);
+          setCheckoutState('verifying');
+          verifyAppointmentPayment(appointment, captured);
+        },
+        onDismiss: () => {
+          // Closed or failed inside Checkout. The appointment stays
+          // pending_payment; the SAME order will be reused on retry.
+          setCheckoutState('idle');
+          setSubmitLock(false);
+          submitLockRef.current = false;
+          setCheckoutError('Payment window closed. Your appointment is still pending payment — you can safely try again.');
+        },
+      });
+    } catch (err) {
+      console.error('Appointment checkout error:', err);
+      setCheckoutState('idle');
+      setSubmitLock(false);
+      submitLockRef.current = false;
+      setCheckoutError(
+        err.response?.data?.detail ||
+        'We couldn\'t open secure payment. Please try again.'
+      );
+    }
+  };
+
+  /**
+   * Send the captured Checkout response to the backend verification
+   * endpoint. The backend response is authoritative: only a verified
+   * result opens the existing confirmation modal. Checkout success alone
+   * NEVER marks the appointment paid or confirmed.
+   */
+  const verifyAppointmentPayment = async (appointment, captured) => {
+    if (
+      !captured.razorpay_payment_id ||
+      !captured.razorpay_order_id ||
+      !captured.razorpay_signature
+    ) {
+      setCheckoutState('idle');
+      setSubmitLock(false);
+      submitLockRef.current = false;
+      setCheckoutError('Payment is being verified. Please try again shortly.');
+      return;
+    }
+
+    try {
+      const response = await api.post(
+        `/appointments/${appointment.id}/payment/verify`,
+        {
+          razorpay_payment_id: captured.razorpay_payment_id,
+          razorpay_order_id: captured.razorpay_order_id,
+          razorpay_signature: captured.razorpay_signature,
+        }
+      );
+
+      if (response.data?.status === 'verified') {
+        // Backend-confirmed: now (and only now) show the confirmation UI.
+        setCheckoutState('verified');
+        queryClient.invalidateQueries({ queryKey: ['appointments'] });
+        setModalOpen(true);
+      } else {
+        setCheckoutState('idle');
+        setSubmitLock(false);
+        submitLockRef.current = false;
+        setCheckoutError('Payment is being verified. Please try again shortly.');
+      }
+    } catch (err) {
+      console.error('Appointment payment verification error:', err);
+      setCheckoutState('idle');
+      setSubmitLock(false);
+      submitLockRef.current = false;
+      setCheckoutError(
+        err.response?.data?.detail ||
+        'Payment is being verified. Please try again shortly.'
+      );
+    }
+  };
 
   const handleServiceSelect = (service) => {
     if (service.id === 'laboratory') {
@@ -402,26 +547,59 @@ const handleHealthContinue = (event) => {
   const handleSubmit = (event) => {
     event.preventDefault();
 
-    if (
-  !selectedService ||
-  !selectedDoctor ||
-  !selectedDate ||
-  !selectedTime ||
-  !selectedProblem
-) {
-  return;
-}
-
-if (
-  selectedProblem.toLowerCase().includes('other') &&
-  !customProblem.trim()
-) {
-  return;
-}
-
-    if (selectedService.id === 'home_visit' && !visitAddress.trim()) {
+    // Synchronous, event-handler-level submission lock. React's async state
+    // (mutation.isPending) can't be trusted for same-tick double clicks; the
+    // ref is checked and set before any await so a second click can never
+    // enter the booking operation.
+    if (submitLockRef.current) {
       return;
     }
+
+    // RETRY for online payments: if the appointment was already created and
+    // checkout/verification was merely dismissed or failed transiently, do
+    // NOT create another appointment. Resume with the SAME appointment:
+    //  - captured Checkout response present -> retry VERIFICATION with the
+    //    SAME payment/order/signature (never a new payment attempt)
+    //  - otherwise -> resume checkout (backend reuses the SAME order)
+    if (
+      paymentMethod === 'online' &&
+      createdAppointment &&
+      checkoutState === 'idle'
+    ) {
+      setSubmitLock(true);
+      submitLockRef.current = true;
+      setCheckoutState('processing');
+      if (razorpayPaymentResponse) {
+        verifyAppointmentPayment(createdAppointment, razorpayPaymentResponse);
+      } else {
+        startAppointmentCheckout(createdAppointment);
+      }
+      return;
+    }
+
+    if (
+      !selectedService ||
+      !selectedDoctor ||
+      !selectedDate ||
+      !selectedTime ||
+      !selectedProblem
+    ) {
+      return;
+    }
+
+    if (
+      selectedProblem.toLowerCase().includes('other') &&
+      !customProblem.trim()
+    ) {
+      return;
+    }
+
+    if (selectedService.id === 'home_visit' && !visitAddress.trim())
+      return;
+
+    // Lock synchronously BEFORE any async work begins.
+    submitLockRef.current = true;
+    setSubmitLock(true);
 
     const appointmentDate = new Date(
       selectedDate.getFullYear(),
@@ -495,7 +673,7 @@ symptoms:
     isBefore(date, startOfToday());
 
   return (
-    <div className="min-h-screen bg-[#f6fbfd] px-4 py-6 md:px-8 md:py-10">
+    <div className="min-h-screen bg-[#F7F4ED] px-4 py-6 md:px-8 md:py-10">
       <div className="max-w-6xl mx-auto">
 
         {/* Header */}
@@ -503,7 +681,7 @@ symptoms:
           <button
             type="button"
             onClick={goBack}
-            className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-[#0b84a5] transition-colors mb-5"
+            className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-[#1F4B45] transition-colors mb-5"
           >
             <ArrowLeft className="w-4 h-4" />
             {step === 1 ? 'Back to Dashboard' : 'Back'}
@@ -511,12 +689,12 @@ symptoms:
 
           <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
             <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#e7f7fb] text-[#0b84a5] text-xs font-extrabold mb-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#EEF5F1] text-[#1F4B45] text-xs font-extrabold mb-3">
                 <HeartPulse className="w-4 h-4" />
                 PHYSIOCARE APPOINTMENTS
               </div>
 
-              <h1 className="text-3xl md:text-4xl font-black text-[#0a2540]">
+              <h1 className="text-3xl md:text-4xl font-black text-[#1E2A2B]">
                 Book your care
               </h1>
 
@@ -527,16 +705,37 @@ symptoms:
             </div>
 
             <div className="hidden md:flex items-center gap-2 text-sm text-slate-400">
-              <ShieldCheck className="w-5 h-5 text-emerald-500" />
+              <ShieldCheck className="w-5 h-5 text-[#1F4B45]" />
               Secure booking
             </div>
           </div>
         </div>
 
-        {/* Progress */}
-        <div className="bg-white border border-[#e4edf2] rounded-2xl p-4 md:p-5 mb-8 shadow-[0_8px_30px_rgba(30,80,120,0.05)]">
-          <div className="flex items-center justify-between max-w-4xl mx-auto">
+        {/* Progress Tracker */}
+        <div className="bg-white border border-[#E5E0D6] rounded-2xl p-4 md:p-5 mb-8 shadow-[0_8px_30px_rgba(30,80,120,0.05)]">
+          {/* Mobile view progress tracker */}
+          <div className="sm:hidden flex flex-col gap-2">
+            <div className="flex justify-between items-center text-xs font-bold text-[#1E2A2B]">
+              <span className="flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#1F4B45] text-white text-xs font-black">{step}</span>
+                Step {step} of 5
+              </span>
+              <span className="text-[#1F4B45]">{['Service', 'Health Details', 'Specialist', 'Date & Time', 'Review'][step - 1]}</span>
+            </div>
+            <div className="w-full bg-[#E5E0D6]/40 h-1.5 rounded-full overflow-hidden flex gap-1">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <div 
+                  key={s} 
+                  className={`h-full flex-1 transition-all duration-300 ${
+                    step >= s ? 'bg-[#1F4B45]' : 'bg-[#E5E0D6]/30'
+                  }`} 
+                />
+              ))}
+            </div>
+          </div>
 
+          {/* Desktop view progress tracker */}
+          <div className="hidden sm:flex items-center justify-between max-w-4xl mx-auto">
             {[
               { number: 1, label: 'Service' },
               { number: 2, label: 'Health Details' },
@@ -549,8 +748,8 @@ symptoms:
                   <div
                     className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-black transition-all ${
                       step >= item.number
-                        ? 'bg-[#0b84a5] text-white shadow-md'
-                        : 'bg-[#edf3f6] text-slate-400'
+                        ? 'bg-[#1F4B45] text-white shadow-md'
+                        : 'bg-[#EEF5F1] text-slate-400'
                     }`}
                   >
                     {step > item.number ? (
@@ -561,9 +760,9 @@ symptoms:
                   </div>
 
                   <span
-                    className={`mt-2 text-[10px] md:text-xs font-bold text-center ${
+                    className={`mt-2 text-xs font-bold text-center ${
                       step >= item.number
-                        ? 'text-[#0b84a5]'
+                        ? 'text-[#1F4B45]'
                         : 'text-slate-400'
                     }`}
                   >
@@ -573,10 +772,10 @@ symptoms:
 
                 {index < 4 && (
                   <div
-                    className={`h-[2px] flex-1 mx-1 md:mx-3 ${
+                    className={`h-[2px] flex-1 mx-3 ${
                       step > item.number
-                        ? 'bg-[#0b84a5]'
-                        : 'bg-[#e6eef2]'
+                        ? 'bg-[#1F4B45]'
+                        : 'bg-[#E5E0D6]'
                     }`}
                   />
                 )}
@@ -589,11 +788,11 @@ symptoms:
         {step === 1 && (
           <section>
             <div className="mb-6">
-              <p className="text-sm font-bold text-[#0b84a5]">
+              <p className="text-sm font-bold text-[#1F4B45]">
                 STEP 01
               </p>
 
-              <h2 className="text-2xl font-black text-[#0a2540] mt-1">
+              <h2 className="text-2xl font-black text-[#1E2A2B] mt-1">
                 What care do you need?
               </h2>
 
@@ -615,16 +814,16 @@ symptoms:
                     onClick={() => handleServiceSelect(service)}
                     className={`group text-left bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${
                       selected
-                        ? 'border-[#0b84a5] shadow-[0_16px_40px_rgba(11,132,165,0.14)] bg-[#f5fcff]'
-                        : 'border-[#e5edf2] shadow-[0_8px_25px_rgba(30,80,120,0.05)] hover:border-[#9bd8e8] hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(30,80,120,0.10)]'
+                        ? 'border-[#1F4B45] shadow-[0_16px_40px_rgba(11,132,165,0.14)] bg-[#EEF5F1]'
+                        : 'border-[#E5E0D6] shadow-[0_8px_25px_rgba(30,80,120,0.05)] hover:border-[#1F4B45] hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(30,80,120,0.10)]'
                     }`}
                   >
                     <div className="flex items-start justify-between">
                       <div
                         className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${
                           selected
-                            ? 'bg-[#0b84a5] text-white'
-                            : 'bg-[#eaf7fb] text-[#0b84a5] group-hover:bg-[#0b84a5] group-hover:text-white'
+                            ? 'bg-[#1F4B45] text-white'
+                            : 'bg-[#eaf7fb] text-[#1F4B45] group-hover:bg-[#1F4B45] group-hover:text-white'
                         }`}
                       >
                         <Icon className="w-7 h-7" />
@@ -633,13 +832,13 @@ symptoms:
                       <ArrowRight
                         className={`w-5 h-5 transition-all ${
                           selected
-                            ? 'text-[#0b84a5]'
-                            : 'text-slate-300 group-hover:text-[#0b84a5] group-hover:translate-x-1'
+                            ? 'text-[#1F4B45]'
+                            : 'text-slate-300 group-hover:text-[#1F4B45] group-hover:translate-x-1'
                         }`}
                       />
                     </div>
 
-                    <h3 className="text-lg font-extrabold text-[#0a2540] mt-5">
+                    <h3 className="text-lg font-extrabold text-[#1E2A2B] mt-5">
                       {service.title}
                     </h3>
 
@@ -657,11 +856,11 @@ symptoms:
         {step === 2 && selectedService && (
           <section className="max-w-3xl mx-auto">
             <div className="mb-6">
-              <p className="text-sm font-bold text-[#0b84a5]">
+              <p className="text-sm font-bold text-[#1F4B45]">
                 STEP 02
               </p>
 
-              <h2 className="text-2xl font-black text-[#0a2540] mt-1">
+              <h2 className="text-2xl font-black text-[#1E2A2B] mt-1">
                 Tell us about your condition
               </h2>
 
@@ -673,11 +872,11 @@ symptoms:
 
             <form
               onSubmit={handleHealthContinue}
-              className="bg-white rounded-3xl border border-[#e4edf2] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8"
+              className="bg-white rounded-3xl border border-[#E5E0D6] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8"
             >
               {/* Selected service */}
-              <div className="flex items-center gap-4 p-4 rounded-2xl bg-[#eef9fc] border border-[#d5eef5] mb-7">
-                <div className="w-12 h-12 rounded-xl bg-[#0b84a5] text-white flex items-center justify-center">
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-[#EEF5F1] border border-[#E5E0D6] mb-7">
+                <div className="w-12 h-12 rounded-xl bg-[#1F4B45] text-white flex items-center justify-center">
                   {(() => {
                     const Icon = selectedService.icon;
                     return <Icon className="w-6 h-6" />;
@@ -685,11 +884,11 @@ symptoms:
                 </div>
 
                 <div>
-                  <p className="text-xs font-bold text-[#0b84a5] uppercase tracking-wide">
+                  <p className="text-xs font-bold text-[#1F4B45] uppercase tracking-wide">
                     Selected Service
                   </p>
 
-                  <p className="font-extrabold text-[#0a2540]">
+                  <p className="font-extrabold text-[#1E2A2B]">
                     {selectedService.title}
                   </p>
                 </div>
@@ -698,7 +897,7 @@ symptoms:
               {/* Physiotherapy Problem Selection */}
 
               <div className="mb-8">
-                <label className="block text-sm font-extrabold text-[#0a2540] mb-2">
+                <label className="block text-sm font-extrabold text-[#1E2A2B] mb-2">
                   Where are you having a problem?
                 </label>
 
@@ -721,8 +920,8 @@ symptoms:
                         }}
                         className={`rounded-2xl border-2 px-4 py-3 text-sm font-extrabold transition-all ${
                           selected
-                            ? 'border-[#0b84a5] bg-[#eef9fc] text-[#0b84a5] shadow-sm'
-                            : 'border-[#e1ebef] bg-white text-[#334e68] hover:border-[#9bd8e8] hover:text-[#0b84a5]'
+                            ? 'border-[#1F4B45] bg-[#EEF5F1] text-[#1F4B45] shadow-sm'
+                            : 'border-[#E5E0D6] bg-white text-[#334e68] hover:border-[#1F4B45] hover:text-[#1F4B45]'
                         }`}
                       >
                         {area}
@@ -734,7 +933,7 @@ symptoms:
 
               {selectedBodyArea && (
                 <div className="mb-8">
-                  <label className="block text-sm font-extrabold text-[#0a2540] mb-2">
+                  <label className="block text-sm font-extrabold text-[#1E2A2B] mb-2">
                     Which best describes your problem?
                   </label>
 
@@ -760,15 +959,15 @@ symptoms:
                           }}
                           className={`text-left rounded-2xl border-2 px-4 py-4 transition-all ${
                             selected
-                              ? 'border-[#0b84a5] bg-[#eef9fc] shadow-sm'
-                              : 'border-[#e1ebef] bg-white hover:border-[#9bd8e8]'
+                              ? 'border-[#1F4B45] bg-[#EEF5F1] shadow-sm'
+                              : 'border-[#E5E0D6] bg-white hover:border-[#1F4B45]'
                           }`}
                         >
                           <div className="flex items-center gap-3">
                             <div
                               className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
                                 selected
-                                  ? 'border-[#0b84a5] bg-[#0b84a5]'
+                                  ? 'border-[#1F4B45] bg-[#1F4B45]'
                                   : 'border-slate-300'
                               }`}
                             >
@@ -780,7 +979,7 @@ symptoms:
                             <span
                               className={`text-sm font-bold ${
                                 selected
-                                  ? 'text-[#0b84a5]'
+                                  ? 'text-[#1F4B45]'
                                   : 'text-[#334e68]'
                               }`}
                             >
@@ -799,7 +998,7 @@ symptoms:
                   <div className="mb-7">
                     <label
                       htmlFor="customProblem"
-                      className="block text-sm font-extrabold text-[#0a2540] mb-2"
+                      className="block text-sm font-extrabold text-[#1E2A2B] mb-2"
                     >
                       Can't find your problem?
                     </label>
@@ -816,7 +1015,7 @@ symptoms:
                       }
                       rows={3}
                       placeholder="Example: Pain near my lower back after sitting for a long time..."
-                      className="w-full rounded-2xl border border-[#dce7ed] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+                      className="w-full rounded-2xl border border-[#E5E0D6] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
                       required
                     />
                   </div>
@@ -825,7 +1024,7 @@ symptoms:
 {/* Symptoms */}
 
 <div className="mb-8">
-  <label className="block text-sm font-extrabold text-[#0a2540] mb-2">
+  <label className="block text-sm font-extrabold text-[#1E2A2B] mb-2">
     Describe your symptoms
   </label>
 
@@ -844,15 +1043,15 @@ symptoms:
           onClick={() => toggleSymptom(symptom)}
           className={`text-left rounded-2xl border-2 px-4 py-3.5 transition-all ${
             selected
-              ? 'border-[#0b84a5] bg-[#eef9fc] text-[#0b84a5]'
-              : 'border-[#e1ebef] bg-white text-[#334e68] hover:border-[#9bd8e8]'
+              ? 'border-[#1F4B45] bg-[#EEF5F1] text-[#1F4B45]'
+              : 'border-[#E5E0D6] bg-white text-[#334e68] hover:border-[#1F4B45]'
           }`}
         >
           <div className="flex items-center gap-3">
             <div
               className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 ${
                 selected
-                  ? 'border-[#0b84a5] bg-[#0b84a5]'
+                  ? 'border-[#1F4B45] bg-[#1F4B45]'
                   : 'border-slate-300'
               }`}
             >
@@ -875,7 +1074,7 @@ symptoms:
   <div className="mb-7">
     <label
       htmlFor="customSymptoms"
-      className="block text-sm font-extrabold text-[#0a2540] mb-2"
+      className="block text-sm font-extrabold text-[#1E2A2B] mb-2"
     >
       Tell us about your other symptoms
     </label>
@@ -888,7 +1087,7 @@ symptoms:
       }
       rows={3}
       placeholder="Describe any other symptoms you're experiencing..."
-      className="w-full rounded-2xl border border-[#dce7ed] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+      className="w-full rounded-2xl border border-[#E5E0D6] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
       required
     />
   </div>
@@ -898,7 +1097,7 @@ symptoms:
               <div className="mb-6">
                 <label
                   htmlFor="duration"
-                  className="block text-sm font-extrabold text-[#0a2540] mb-2"
+                  className="block text-sm font-extrabold text-[#1E2A2B] mb-2"
                 >
                   How long have you had this problem?
                 </label>
@@ -913,7 +1112,7 @@ symptoms:
                       setDurationDays(event.target.value)
                     }
                     placeholder="Number of days"
-                    className="w-full rounded-2xl border border-[#dce7ed] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+                    className="w-full rounded-2xl border border-[#E5E0D6] bg-[#fbfdfe] px-4 py-3.5 text-sm text-slate-700 outline-none transition focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
                   />
 
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-slate-400 font-semibold">
@@ -924,7 +1123,7 @@ symptoms:
 
               {/* Pain level */}
               <div className="mb-6">
-                <p className="text-sm font-extrabold text-[#0a2540] mb-3">
+                <p className="text-sm font-extrabold text-[#1E2A2B] mb-3">
                   How would you describe your pain?
                 </p>
 
@@ -941,8 +1140,8 @@ symptoms:
                         }
                         className={`rounded-2xl border-2 p-4 text-center transition-all ${
                           selected
-                            ? 'border-[#0b84a5] bg-[#eef9fc] text-[#0b84a5]'
-                            : 'border-[#e3ebef] bg-white hover:border-[#a8dbe8]'
+                            ? 'border-[#1F4B45] bg-[#EEF5F1] text-[#1F4B45]'
+                            : 'border-[#e3ebef] bg-white hover:border-[#1F4B45]'
                         }`}
                       >
                         <div className="font-extrabold">
@@ -962,7 +1161,7 @@ symptoms:
 
 {selectedService?.id === 'home_visit' && (
   <div className="mb-8">
-    <label className="block text-sm font-extrabold text-[#0a2540] mb-2">
+    <label className="block text-sm font-extrabold text-[#1E2A2B] mb-2">
       Where should the physiotherapist visit?
     </label>
 
@@ -971,14 +1170,14 @@ symptoms:
       50 km of Nellore.
     </p>
 
-    <div className="rounded-2xl border border-[#dce7ed] bg-white p-5">
+    <div className="rounded-2xl border border-[#E5E0D6] bg-white p-5">
       <div className="flex items-start gap-4">
-        <div className="w-11 h-11 rounded-xl bg-[#eef9fc] text-[#0b84a5] flex items-center justify-center shrink-0">
+        <div className="w-11 h-11 rounded-xl bg-[#EEF5F1] text-[#1F4B45] flex items-center justify-center shrink-0">
           <span className="text-xl">📍</span>
         </div>
 
         <div className="flex-1">
-          <h3 className="text-sm font-extrabold text-[#0a2540]">
+          <h3 className="text-sm font-extrabold text-[#1E2A2B]">
             Check home-visit availability
           </h3>
 
@@ -991,7 +1190,7 @@ symptoms:
             type="button"
             onClick={handleUseCurrentLocation}
             disabled={locationStatus === 'loading'}
-            className="mt-4 rounded-xl bg-[#0b84a5] px-5 py-3 text-sm font-extrabold text-white transition hover:bg-[#08748f] disabled:opacity-60"
+            className="mt-4 rounded-xl bg-[#1F4B45] px-5 py-3 text-sm font-extrabold text-white transition hover:bg-[#08748f] disabled:opacity-60"
           >
             {locationStatus === 'loading'
               ? 'Detecting location...'
@@ -1060,7 +1259,7 @@ symptoms:
     {locationStatus === 'available' && (
       <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Building / House Name
           </label>
 
@@ -1074,12 +1273,12 @@ symptoms:
               )
             }
             placeholder="Enter building or house name"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Door / Flat Number
           </label>
 
@@ -1093,12 +1292,12 @@ symptoms:
               )
             }
             placeholder="Example: 2-45"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Area / Locality
           </label>
 
@@ -1112,12 +1311,12 @@ symptoms:
               )
             }
             placeholder="Enter your area"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Street
           </label>
 
@@ -1131,12 +1330,12 @@ symptoms:
               )
             }
             placeholder="Enter street name"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Landmark
           </label>
 
@@ -1150,12 +1349,12 @@ symptoms:
               )
             }
             placeholder="Nearby landmark"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-bold text-[#0a2540] mb-2">
+          <label className="block text-sm font-bold text-[#1E2A2B] mb-2">
             Pincode
           </label>
 
@@ -1171,7 +1370,7 @@ symptoms:
               )
             }
             placeholder="Enter pincode"
-            className="w-full rounded-xl border border-[#dce7ed] bg-white px-4 py-3 text-sm outline-none focus:border-[#0b84a5] focus:ring-4 focus:ring-[#0b84a5]/10"
+            className="w-full rounded-xl border border-[#E5E0D6] bg-white px-4 py-3 text-sm outline-none focus:border-[#1F4B45] focus:ring-4 focus:ring-[#1F4B45]/10"
           />
         </div>
       </div>
@@ -1179,17 +1378,17 @@ symptoms:
   </div>
 )}
 
-<div className="mt-6 rounded-xl border border-[#dce7ed] bg-[#f8fbfc] p-4">
+<div className="mt-6 rounded-xl border border-[#E5E0D6] bg-[#f8fbfc] p-4">
   <label className="flex items-center gap-3 cursor-pointer">
     <input
       type="checkbox"
       checked={saveAddress}
       onChange={(event) => setSaveAddress(event.target.checked)}
-      className="h-5 w-5 accent-[#0b84a5]"
+      className="h-5 w-5 accent-[#1F4B45]"
     />
 
     <div>
-      <p className="text-sm font-bold text-[#0a2540]">
+      <p className="text-sm font-bold text-[#1E2A2B]">
         Save this address for future home visits
       </p>
 
@@ -1203,7 +1402,7 @@ symptoms:
 <div className="mt-8 flex justify-end">
   <button
     type="submit"
-    className="rounded-xl bg-[#0b84a5] px-6 py-3 font-bold text-white transition hover:bg-[#096f8a]"
+    className="rounded-xl bg-[#1F4B45] px-6 py-3 font-bold text-white transition hover:bg-[#096f8a]"
   >
     Continue to Specialists →
   </button>
@@ -1216,11 +1415,11 @@ symptoms:
         {step === 3 && (
           <section>
             <div className="mb-6">
-              <p className="text-sm font-bold text-[#0b84a5]">
+              <p className="text-sm font-bold text-[#1F4B45]">
                 STEP 03
               </p>
 
-              <h2 className="text-2xl font-black text-[#0a2540] mt-1">
+              <h2 className="text-2xl font-black text-[#1E2A2B] mt-1">
                 Choose your specialist
               </h2>
 
@@ -1246,10 +1445,10 @@ symptoms:
                 ))}
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-[#e5edf2] p-10 text-center">
+              <div className="bg-white rounded-2xl border border-[#E5E0D6] p-10 text-center">
                 <Stethoscope className="w-10 h-10 text-slate-300 mx-auto" />
 
-                <h3 className="font-extrabold text-[#0a2540] mt-4">
+                <h3 className="font-extrabold text-[#1E2A2B] mt-4">
                   No specialists available
                 </h3>
 
@@ -1265,11 +1464,11 @@ symptoms:
         {step === 4 && selectedDoctor && (
           <section>
             <div className="mb-6">
-              <p className="text-sm font-bold text-[#0b84a5]">
+              <p className="text-sm font-bold text-[#1F4B45]">
                 STEP 04
               </p>
 
-              <h2 className="text-2xl font-black text-[#0a2540] mt-1">
+              <h2 className="text-2xl font-black text-[#1E2A2B] mt-1">
                 Choose date & time
               </h2>
 
@@ -1281,14 +1480,14 @@ symptoms:
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
               {/* Calendar */}
-              <div className="bg-white rounded-3xl border border-[#e4edf2] shadow-[0_10px_30px_rgba(30,80,120,0.05)] p-6">
+              <div className="bg-white rounded-3xl border border-[#E5E0D6] shadow-[0_10px_30px_rgba(30,80,120,0.05)] p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#0b84a5] flex items-center justify-center">
+                  <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#1F4B45] flex items-center justify-center">
                     <CalendarDays className="w-5 h-5" />
                   </div>
 
                   <div>
-                    <h3 className="font-extrabold text-[#0a2540]">
+                    <h3 className="font-extrabold text-[#1E2A2B]">
                       Select a date
                     </h3>
 
@@ -1308,12 +1507,12 @@ symptoms:
                 </div>
 
                 {selectedDate && (
-                  <div className="mt-5 p-4 rounded-2xl bg-[#eef9fc] border border-[#d5eef5]">
-                    <p className="text-xs font-bold text-[#0b84a5] uppercase">
+                  <div className="mt-5 p-4 rounded-2xl bg-[#EEF5F1] border border-[#E5E0D6]">
+                    <p className="text-xs font-bold text-[#1F4B45] uppercase">
                       Selected Date
                     </p>
 
-                    <p className="font-extrabold text-[#0a2540] mt-1">
+                    <p className="font-extrabold text-[#1E2A2B] mt-1">
                       {format(selectedDate, 'EEEE, MMMM dd, yyyy')}
                     </p>
                   </div>
@@ -1321,14 +1520,14 @@ symptoms:
               </div>
 
               {/* Slots */}
-              <div className="bg-white rounded-3xl border border-[#e4edf2] shadow-[0_10px_30px_rgba(30,80,120,0.05)] p-6">
+              <div className="bg-white rounded-3xl border border-[#E5E0D6] shadow-[0_10px_30px_rgba(30,80,120,0.05)] p-6">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#0b84a5] flex items-center justify-center">
+                  <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#1F4B45] flex items-center justify-center">
                     <Clock3 className="w-5 h-5" />
                   </div>
 
                   <div>
-                    <h3 className="font-extrabold text-[#0a2540]">
+                    <h3 className="font-extrabold text-[#1E2A2B]">
                       Available time slots
                     </h3>
 
@@ -1363,8 +1562,8 @@ symptoms:
                           }
                           className={`flex items-center justify-center gap-2 rounded-xl border-2 py-3.5 text-sm font-extrabold transition-all ${
                             selected
-                              ? 'border-[#0b84a5] bg-[#0b84a5] text-white shadow-md'
-                              : 'border-[#e1ebef] bg-white text-[#334e68] hover:border-[#0b84a5] hover:text-[#0b84a5]'
+                              ? 'border-[#1F4B45] bg-[#EEF5F1] text-[#1F4B45] shadow-sm font-black'
+                              : 'border-[#E5E0D6] bg-white text-[#334e68] hover:border-[#1F4B45] hover:text-[#1F4B45]'
                           }`}
                         >
                           <Clock3 className="w-4 h-4" />
@@ -1393,11 +1592,11 @@ symptoms:
           selectedTime && (
             <section className="max-w-4xl mx-auto">
               <div className="mb-6">
-                <p className="text-sm font-bold text-[#0b84a5]">
+                <p className="text-sm font-bold text-[#1F4B45]">
                   STEP 05
                 </p>
 
-                <h2 className="text-2xl font-black text-[#0a2540] mt-1">
+                <h2 className="text-2xl font-black text-[#1E2A2B] mt-1">
                   Review your booking
                 </h2>
 
@@ -1412,15 +1611,15 @@ symptoms:
                 className="grid grid-cols-1 lg:grid-cols-5 gap-6"
               >
                 {/* Summary */}
-                <div className="lg:col-span-3 bg-white rounded-3xl border border-[#e4edf2] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8">
+                <div className="lg:col-span-3 bg-white rounded-3xl border border-[#E5E0D6] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8">
 
                   <div className="flex items-center gap-3 mb-6">
-                    <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#0b84a5] flex items-center justify-center">
+                    <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#1F4B45] flex items-center justify-center">
                       <ClipboardList className="w-5 h-5" />
                     </div>
 
                     <div>
-                      <h3 className="font-extrabold text-[#0a2540]">
+                      <h3 className="font-extrabold text-[#1E2A2B]">
                         Appointment summary
                       </h3>
 
@@ -1437,7 +1636,7 @@ symptoms:
                         Service
                       </p>
 
-                      <p className="font-extrabold text-[#0a2540] mt-1">
+                      <p className="font-extrabold text-[#1E2A2B] mt-1">
                         {selectedService?.title}
                       </p>
                     </div>
@@ -1449,11 +1648,11 @@ symptoms:
                         Specialist
                       </p>
 
-                      <p className="font-extrabold text-[#0a2540] mt-1">
+                      <p className="font-extrabold text-[#1E2A2B] mt-1">
                         {selectedDoctor.full_name}
                       </p>
 
-                      <p className="text-sm text-[#0b84a5] font-semibold mt-1">
+                      <p className="text-sm text-[#1F4B45] font-semibold mt-1">
                         {selectedDoctor.specialization}
                       </p>
                     </div>
@@ -1466,7 +1665,7 @@ symptoms:
                           Date
                         </p>
 
-                        <p className="font-bold text-[#0a2540] mt-1">
+                        <p className="font-bold text-[#1E2A2B] mt-1">
                           {format(
                             selectedDate,
                             'MMM dd, yyyy'
@@ -1479,7 +1678,7 @@ symptoms:
                           Time
                         </p>
 
-                        <p className="font-bold text-[#0a2540] mt-1">
+                        <p className="font-bold text-[#1E2A2B] mt-1">
                           {selectedTime}
                         </p>
                       </div>
@@ -1492,8 +1691,10 @@ symptoms:
                         Problem
                       </p>
 
-                      <p className="text-sm text-slate-600 mt-1 leading-6">
-                        {reason}
+                      <p className="text-sm text-slate-600 mt-1 leading-6 whitespace-pre-line">
+                        {selectedProblem.toLowerCase().includes('other')
+                          ? customProblem.trim()
+                          : selectedProblem}
                       </p>
                     </div>
 
@@ -1525,15 +1726,15 @@ symptoms:
                 </div>
 
                 {/* Payment */}
-                <div className="lg:col-span-2 bg-white rounded-3xl border border-[#e4edf2] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8 h-fit">
+                <div className="lg:col-span-2 bg-white rounded-3xl border border-[#E5E0D6] shadow-[0_12px_35px_rgba(30,80,120,0.06)] p-6 md:p-8 h-fit">
 
                   <div className="flex items-center gap-3 mb-6">
-                    <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#0b84a5] flex items-center justify-center">
+                    <div className="w-11 h-11 rounded-xl bg-[#eaf7fb] text-[#1F4B45] flex items-center justify-center">
                       <CreditCard className="w-5 h-5" />
                     </div>
 
                     <div>
-                      <h3 className="font-extrabold text-[#0a2540]">
+                      <h3 className="font-extrabold text-[#1E2A2B]">
                         Payment method
                       </h3>
 
@@ -1552,17 +1753,17 @@ symptoms:
                       }
                       className={`w-full text-left rounded-2xl border-2 p-4 transition-all ${
                         paymentMethod === 'offline'
-                          ? 'border-[#0b84a5] bg-[#eef9fc]'
-                          : 'border-[#e2ebef] hover:border-[#a8dbe8]'
+                          ? 'border-[#1F4B45] bg-[#EEF5F1]'
+                          : 'border-[#e2ebef] hover:border-[#1F4B45]'
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[#0b84a5]">
+                        <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[#1F4B45]">
                           <Banknote className="w-5 h-5" />
                         </div>
 
                         <div className="flex-1">
-                          <p className="font-extrabold text-[#0a2540]">
+                          <p className="font-extrabold text-[#1E2A2B]">
                             Pay Offline
                           </p>
 
@@ -1572,7 +1773,7 @@ symptoms:
                         </div>
 
                         {paymentMethod === 'offline' && (
-                          <Check className="w-5 h-5 text-[#0b84a5]" />
+                          <Check className="w-5 h-5 text-[#1F4B45]" />
                         )}
                       </div>
                     </button>
@@ -1584,17 +1785,17 @@ symptoms:
                       }
                       className={`w-full text-left rounded-2xl border-2 p-4 transition-all ${
                         paymentMethod === 'online'
-                          ? 'border-[#0b84a5] bg-[#eef9fc]'
-                          : 'border-[#e2ebef] hover:border-[#a8dbe8]'
+                          ? 'border-[#1F4B45] bg-[#EEF5F1]'
+                          : 'border-[#e2ebef] hover:border-[#1F4B45]'
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[#0b84a5]">
+                        <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center text-[#1F4B45]">
                           <CreditCard className="w-5 h-5" />
                         </div>
 
                         <div className="flex-1">
-                          <p className="font-extrabold text-[#0a2540]">
+                          <p className="font-extrabold text-[#1E2A2B]">
                             Pay Online
                           </p>
 
@@ -1604,7 +1805,7 @@ symptoms:
                         </div>
 
                         {paymentMethod === 'online' && (
-                          <Check className="w-5 h-5 text-[#0b84a5]" />
+                          <Check className="w-5 h-5 text-[#1F4B45]" />
                         )}
                       </div>
                     </button>
@@ -1617,20 +1818,20 @@ symptoms:
                       Consultation
                     </span>
 
-                    <span className="font-extrabold text-[#0a2540]">
+                    <span className="font-extrabold text-[#1E2A2B]">
                       ₹
-                      {selectedDoctor.consultation_fee || 120}
+                      {consultationFee}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between mb-6">
-                    <span className="font-extrabold text-[#0a2540]">
+                    <span className="font-extrabold text-[#1E2A2B]">
                       Total
                     </span>
 
-                    <span className="text-2xl font-black text-[#0b84a5]">
+                    <span className="text-2xl font-black text-[#1F4B45]">
                       ₹
-                      {selectedDoctor.consultation_fee || 120}
+                      {consultationFee}
                     </span>
                   </div>
 
@@ -1641,20 +1842,36 @@ symptoms:
                     </div>
                   )}
 
+                  {checkoutError && (
+                    <div className="mb-4 rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-700">
+                      {checkoutError}
+                    </div>
+                  )}
+
+                  {checkoutState === 'verifying' && (
+                    <div className="mb-4 rounded-xl bg-[#EEF5F1] border border-[#1F4B45]/20 px-4 py-3 text-sm font-semibold text-[#1F4B45]">
+                      Payment submitted — we're confirming it with your bank. Your appointment is saved and stays pending until verification completes.
+                    </div>
+                  )}
+
                   <Button
                     type="submit"
                     className="w-full py-4"
-                    disabled={bookMutation.isPending}
+                    disabled={submitLock || bookMutation.isPending || checkoutState === 'verifying' || checkoutState === 'verified'}
                   >
-                    {bookMutation.isPending
-                      ? 'Confirming...'
-                      : paymentMethod === 'online'
-                        ? 'Continue to Payment'
-                        : 'Confirm Appointment'}
+                    {checkoutState === 'verifying'
+                      ? 'Verifying payment...'
+                      : checkoutState === 'verified'
+                        ? 'Payment verified'
+                        : submitLock || bookMutation.isPending
+                          ? 'Confirming...'
+                          : paymentMethod === 'online'
+                            ? 'Continue to Payment'
+                            : 'Confirm Appointment'}
                   </Button>
 
                   <div className="flex items-center justify-center gap-2 mt-4 text-xs text-slate-400">
-                    <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                    <ShieldCheck className="w-4 h-4 text-[#1F4B45]" />
                     Your booking information is secure
                   </div>
                 </div>
@@ -1670,12 +1887,12 @@ symptoms:
         >
           <div className="text-center space-y-5">
 
-            <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto">
+            <div className="w-16 h-16 rounded-full bg-emerald-50 text-[#1F4B45] flex items-center justify-center mx-auto">
               <Check className="w-8 h-8" strokeWidth={3} />
             </div>
 
             <div>
-              <h4 className="font-black text-xl text-[#0a2540]">
+              <h4 className="font-black text-xl text-[#1E2A2B]">
                 Your appointment is confirmed
               </h4>
 
@@ -1692,7 +1909,7 @@ symptoms:
                   Service
                 </span>
 
-                <span className="text-sm font-bold text-[#0a2540] text-right">
+                <span className="text-sm font-bold text-[#1E2A2B] text-right">
                   {selectedService?.title}
                 </span>
               </div>
@@ -1702,7 +1919,7 @@ symptoms:
                   Specialist
                 </span>
 
-                <span className="text-sm font-bold text-[#0a2540] text-right">
+                <span className="text-sm font-bold text-[#1E2A2B] text-right">
                   {selectedDoctor?.full_name}
                 </span>
               </div>
@@ -1712,7 +1929,7 @@ symptoms:
                   Date
                 </span>
 
-                <span className="text-sm font-bold text-[#0a2540]">
+                <span className="text-sm font-bold text-[#1E2A2B]">
                   {selectedDate &&
                     format(selectedDate, 'MMM dd, yyyy')}
                 </span>
@@ -1723,7 +1940,7 @@ symptoms:
                   Time
                 </span>
 
-                <span className="text-sm font-bold text-[#0a2540]">
+                <span className="text-sm font-bold text-[#1E2A2B]">
                   {selectedTime}
                 </span>
               </div>
@@ -1733,7 +1950,7 @@ symptoms:
                   Payment
                 </span>
 
-                <span className="text-sm font-bold text-[#0a2540] capitalize">
+                <span className="text-sm font-bold text-[#1E2A2B] capitalize">
                   {paymentMethod}
                 </span>
               </div>

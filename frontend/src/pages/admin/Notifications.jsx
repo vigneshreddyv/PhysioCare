@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
-import Button from '../../components/common/Button';
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
