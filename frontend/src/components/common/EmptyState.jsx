@@ -6,7 +6,8 @@ export default function EmptyState({
   message = 'There is currently no data in this view.',
   icon = 'folder_open',
   actionLabel,
-  onAction
+  onAction,
+  actionVariant = 'primary'
 }) {
   return (
     <div className="w-full py-12 px-6 flex flex-col items-center justify-center text-center bg-surface-container-low/40 rounded-xl border border-surface-container/60">
@@ -16,7 +17,7 @@ export default function EmptyState({
       <h3 className="font-headline-md text-headline-md text-on-surface mb-2">{title}</h3>
       <p className="text-sm text-on-surface-variant max-w-md mb-6">{message}</p>
       {actionLabel && onAction && (
-        <Button variant="primary" onClick={onAction}>
+        <Button variant={actionVariant} onClick={onAction}>
           {actionLabel}
         </Button>
       )}

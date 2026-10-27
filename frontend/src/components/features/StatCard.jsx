@@ -62,7 +62,7 @@ export default function StatCard({
     <Card
       hoverable
       elevation={elevation ? 'shadow-md' : 'shadow-sm'}
-      className={`relative overflow-hidden group ${fullWidth ? 'w-full' : ''} ${compact ? 'h-32' : 'h-48'} transition-all duration-300 hover:shadow-lg`}
+      className={`relative overflow-hidden group ${fullWidth ? 'w-full' : ''} ${compact ? 'min-h-32' : 'min-h-48'} transition-all duration-300 hover:shadow-lg`}
     >
       {/* Background Icon Watermark */}
       {showIconBackground && (
@@ -76,13 +76,13 @@ export default function StatCard({
       {/* Card Content */}
       <div className="relative z-10 p-4 pt-6">
         {/* Header with Title and Icon */}
-        <div className="flex items-center mb-3">
+        <div className="flex items-start mb-3">
           {showIconBackground && (
             <div className={`${selectedBg} ${selectedIconSize} flex-shrink-0 mr-3`}>
               <span className="material-symbols-outlined">{icon}</span>
             </div>
           )}
-          <h3 className={`font-medium text-sm text-muted flex-1 truncate`}>
+          <h3 className="min-w-0 flex-1 pt-1 text-sm font-medium leading-snug text-muted">
             {title}
           </h3>
         </div>

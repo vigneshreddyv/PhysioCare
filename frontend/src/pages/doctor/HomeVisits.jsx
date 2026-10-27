@@ -4,94 +4,36 @@ import api from '../../services/api';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import EmptyState from '../../components/common/EmptyState';
-import { format } from 'date-fns';
 
 export default function HomeVisits() {
-  const { 
-    data: appointments, 
-    isLoading, 
-    error, 
-    refetch 
-  } = useQuery({
-    queryKey: ['appointments'],
-    queryFn: async () => {
-      const response = await api.get('/appointments');
-      return response.data;
-    }
+  const { data: requests, isLoading, error, refetch } = useQuery({
+    queryKey: ['doctorHomeVisitRequests'],
+    queryFn: async () => (await api.get('/home-visit-requests/doctor')).data,
   });
 
-  if (error) {
-    return <ErrorState message="Could not load visit logs." onRetry={() => refetch()} />;
-  }
-
-  // Filter appointments to show in-progress or scheduled home visits
-  const visits = appointments?.filter(
-    (a) => a.reason.toLowerCase().includes('home') || a.status === 'scheduled' || a.status === 'in_progress'
-  ) || [];
+  if (error) return <ErrorState message="Could not load assigned home-visit requests." onRetry={() => refetch()} />;
 
   return (
-    <div className="space-y-stack-lg animate-fade-in">
-      <div className="mb-stack-lg">
-        <h2 className="font-headline-lg text-headline-lg font-semibold text-on-surface tracking-tight">Home Visits</h2>
-        <p className="font-body-md text-body-md text-on-surface-variant mt-1">Track and manage therapy sessions scheduled at patients' residences.</p>
-      </div>
-
-      <div className="bg-surface-container-lowest border border-surface-container rounded-xl shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-surface-container flex justify-between items-center bg-surface-container-low/40">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Scheduled Visits</h3>
-          <span className="text-xs bg-primary/10 text-primary font-bold px-3 py-1 rounded-full">
-            {visits.length} Visits Pending
-          </span>
-        </div>
-
-        {isLoading ? (
-          <div className="p-6 space-y-4">
-            <Skeleton variant="row" count={2} />
-          </div>
-        ) : visits.length === 0 ? (
-          <div className="p-6">
-            <EmptyState 
-              title="No home visits scheduled" 
-              message="No patient appointments are registered as home visit services today."
-              icon="home_health"
-            />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-surface-container border-b border-surface-container text-on-surface-variant font-label-md text-label-md">
-                  <th className="p-4">Patient</th>
-                  <th className="p-4">Date & Time</th>
-                  <th className="p-4">Treatment / Symptoms</th>
-                  <th className="p-4">Visit Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-container">
-                {visits.map((visit) => (
-                  <tr key={visit.id} className="hover:bg-surface-container-low transition-colors duration-150">
-                    <td className="p-4 font-semibold text-on-surface">{visit.patient_name}</td>
-                    <td className="p-4 text-on-surface-variant text-sm">
-                      <div>{format(new Date(visit.appointment_date), 'MMM dd, yyyy')}</div>
-                      <div className="text-xs text-outline">{visit.time_slot}</div>
-                    </td>
-                    <td className="p-4 text-on-surface-variant text-sm">{visit.reason}</td>
-                    <td className="p-4">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        visit.status === 'in_progress'
-                          ? 'bg-secondary-container/30 text-secondary'
-                          : 'bg-primary-container/20 text-primary'
-                      }`}>
-                        {visit.status === 'in_progress' ? 'In Progress' : 'Scheduled'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <div className="portal-page animate-fade-in">
+      <header className="portal-hero">
+        <span className="portal-hero__eyebrow"><span className="material-symbols-outlined" aria-hidden="true">home_health</span>Coordination review</span>
+        <h1>Assigned home-visit requests</h1>
+        <p>Review only requests that named you and were approved by the clinic for coordination.</p>
+      </header>
+      <div className="portal-trust-note" role="note"><span className="material-symbols-outlined" aria-hidden="true">info</span><span>These are not confirmed or scheduled visits. No time, capacity, coverage, or service-area decision has been made.</span></div>
+      <section className="portal-section-card" aria-labelledby="doctor-home-requests-heading">
+        <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Selected clinician only</span><h2 id="doctor-home-requests-heading" className="font-headline-md text-headline-md">Approved for coordination</h2></div><span className="portal-count-pill">{requests?.length || 0} requests</span></div>
+        {isLoading ? <Skeleton variant="row" count={2} /> : !requests?.length ? <div className="p-6"><EmptyState title="No assigned requests" message="Only clinic-approved requests that specifically name you appear here." icon="home_health" /></div> : (
+          <div className="reception-schedule-grid">
+            {requests.map((request) => <article key={request.id} className="portal-mobile-record">
+              <div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Approved for coordination</p><h3 className="font-semibold">{request.patient_name}</h3><p className="text-sm text-on-surface-variant">{request.patient_phone || 'No phone provided'}</p></div>
+              <div className="portal-mobile-record__row"><span>Address</span><strong>{request.home_address}</strong></div>
+              <div className="portal-mobile-record__row"><span>Clinical reason</span><strong>{request.reason}</strong></div>
+              <p className="text-sm text-on-surface-variant">{request.confirmation_message}</p>
+            </article>)}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

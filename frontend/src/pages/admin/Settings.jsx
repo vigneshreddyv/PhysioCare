@@ -9,16 +9,17 @@ export default function Settings() {
   const { theme, toggleTheme } = useTheme();
 
   return (
-    <div className="space-y-stack-lg animate-fade-in max-w-2xl">
-      <div className="mb-stack-lg">
-        <h2 className="font-headline-lg text-headline-lg font-semibold text-on-surface tracking-tight">Settings</h2>
-        <p className="font-body-md text-body-md text-on-surface-variant mt-1">Manage portal preferences and view account metadata.</p>
-      </div>
+    <div className="portal-page animate-fade-in max-w-4xl">
+      <header className="portal-hero">
+        <span className="portal-hero__eyebrow"><span className="material-symbols-outlined" aria-hidden="true">tune</span>Workspace settings</span>
+        <h1>Profile and display preferences</h1>
+        <p>Review the account metadata currently available to this session and adjust local interface appearance.</p>
+      </header>
 
-      <Card className="space-y-6">
+      <Card className="portal-dashboard-card space-y-8">
         <div>
           <h3 className="font-headline-md text-headline-md font-semibold text-on-surface mb-2 border-b border-surface-container pb-2">Profile Information</h3>
-          <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 text-sm">
             <div>
               <p className="font-bold text-on-surface-variant">Full Name</p>
               <p className="text-on-surface text-base mt-1">{user?.full_name}</p>
@@ -52,6 +53,11 @@ export default function Settings() {
               {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
             </Button>
           </div>
+        </div>
+
+        <div className="portal-trust-note" role="note">
+          <span className="material-symbols-outlined" aria-hidden="true">shield_lock</span>
+          <span>This page does not change passwords, permissions, authentication policy, or clinical access. Those controls require a verified security workflow.</span>
         </div>
       </Card>
     </div>

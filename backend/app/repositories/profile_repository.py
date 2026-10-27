@@ -22,11 +22,17 @@ class ProfileRepository:
 
     @staticmethod
     async def get_doctor_by_id(id: str) -> Optional[Doctor]:
-        return await Doctor.get(PydanticObjectId(id))
+        try:
+            return await Doctor.get(PydanticObjectId(id))
+        except (ValueError, TypeError):
+            return None
 
     @staticmethod
     async def get_patient_by_id(id: str) -> Optional[Patient]:
-        return await Patient.get(PydanticObjectId(id))
+        try:
+            return await Patient.get(PydanticObjectId(id))
+        except (ValueError, TypeError):
+            return None
 
     @staticmethod
     async def create_doctor(doctor: Doctor) -> Doctor:
@@ -35,6 +41,14 @@ class ProfileRepository:
     @staticmethod
     async def create_patient(patient: Patient) -> Patient:
         return await patient.insert()
+
+    @staticmethod
+    async def save_patient(patient: Patient) -> Patient:
+        return await patient.save()
+
+    @staticmethod
+    async def save_doctor(doctor: Doctor) -> Doctor:
+        return await doctor.save()
 
     @staticmethod
     async def list_doctors() -> List[Doctor]:

@@ -7,22 +7,28 @@ export default function AdminLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-background text-on-surface flex">
+    <div className="portal-layout min-h-screen bg-background text-on-surface flex">
       {/* Sidebar for desktop and mobile */}
-      <Sidebar className={`transition-transform duration-300 md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:hidden'}`} />
+      <Sidebar
+        className={`transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
+        onNavigate={() => setSidebarOpen(false)}
+        onClose={() => setSidebarOpen(false)}
+      />
       
       {/* Backdrop overlay for mobile menu drawer */}
       {sidebarOpen && (
-        <div 
+        <button
+          type="button"
+          aria-label="Close navigation menu"
           onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-40 md:hidden"
+          className="portal-drawer-backdrop fixed inset-0 bg-inverse-surface/40 backdrop-blur-sm z-40 md:hidden"
         />
       )}
 
       {/* Main Content Wrapper (offset by sidebar width on desktop) */}
-      <div className="flex-1 flex flex-col ml-0 md:ml-64 w-full min-h-screen">
-        <Navbar onMenuToggle={() => setSidebarOpen(!sidebarOpen)} />
-        <main className="flex-1 p-container-padding-mobile md:p-container-padding-desktop pb-section-gap">
+      <div className="portal-main-wrap flex-1 flex flex-col ml-0 md:ml-64 w-full min-h-screen">
+        <Navbar onMenuToggle={() => setSidebarOpen(!sidebarOpen)} menuOpen={sidebarOpen} />
+        <main id="portal-main" className="portal-main flex-1 p-container-padding-mobile md:p-container-padding-desktop pb-section-gap" tabIndex="-1">
           <Outlet />
         </main>
       </div>

@@ -1,11 +1,16 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
 from app.api.appointments import router as appointments_router
 from app.api.users import router as users_router
 from app.api.analytics import router as analytics_router
+from app.api.home_visits import router as home_visits_router
+from app.api.lab_requests import router as lab_requests_router
+from app.api.clinician_schedules import router as clinician_schedules_router
 from app.database import init_db
+from app.core.config import settings
 
 app = FastAPI(
     title="PhysioCare API",
@@ -17,43 +22,24 @@ app = FastAPI(
 # -----------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-CSRF-Token", "X-Report-Filename"],
 )
 
-# -----------------------------
-# REQUEST LOGGER
-# -----------------------------
+
 @app.middleware("http")
-async def log_request(request: Request, call_next):
-    print("\n" + "=" * 60)
-    print(f"[REQUEST] {request.method} {request.url.path}")
-
-    auth = request.headers.get("authorization")
-
-    if auth:
-        print("[REQUEST] Authorization Header FOUND")
-        print(f"[REQUEST] {auth}")
-    else:
-        print("[REQUEST] Authorization Header MISSING")
-
-    print("\n[REQUEST] All Headers:")
-    for key, value in request.headers.items():
-        print(f"{key}: {value}")
-
-    print("=" * 60)
-
-    response = await call_next(request)
-
-    print(f"[RESPONSE] Status: {response.status_code}")
-    print("=" * 60 + "\n")
-
-    return response
+async def reject_untrusted_unsafe_origins(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        fetch_site = request.headers.get("sec-fetch-site")
+        if fetch_site == "cross-site" or (origin and origin not in settings.CORS_ORIGINS):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Origin not allowed"},
+            )
+    return await call_next(request)
 
 # -----------------------------
 # STARTUP
@@ -69,6 +55,9 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
 app.include_router(users_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
+app.include_router(home_visits_router, prefix="/api")
+app.include_router(lab_requests_router, prefix="/api")
+app.include_router(clinician_schedules_router, prefix="/api")
 
 # -----------------------------
 # ROOT

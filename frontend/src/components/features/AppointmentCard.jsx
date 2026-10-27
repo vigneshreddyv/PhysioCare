@@ -1,7 +1,13 @@
 import React from 'react';
 import { format, parseISO } from 'date-fns';
 
-export default function AppointmentCard({ appointment, displayRole = 'admin', onStatusChange }) {
+export default function AppointmentCard({
+  appointment,
+  displayRole = 'admin',
+  onStatusChange,
+  onCancel,
+  cancelPending = false,
+}) {
   const {
     id,
     patient_name,
@@ -11,7 +17,12 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
     reason,
     status,
     specialty,
-    duration
+    duration,
+    can_patient_cancel,
+    cancellation_message,
+    service_mode = 'clinic',
+    home_address,
+    city,
   } = appointment;
 
   // Format date (date-only) and use time_slot for time
@@ -40,30 +51,42 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
   };
 
   const specialtyInfo = specialties[specialty] || { icon: 'local_hospital', color: 'gray' };
+  const primaryName = displayRole === 'patient' ? doctor_name : patient_name;
+  const secondaryLabel = displayRole === 'patient'
+    ? (specialty || 'Physiotherapy specialist')
+    : `Patient: ${patient_name}`;
+  const initials = primaryName
+    ?.split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((name) => name[0])
+    .join('')
+    .toUpperCase() || 'PT';
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-300 cursor-pointer">
+    <article
+      className={`bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-300${displayRole === 'patient' ? ' patient-appointment' : ''}`}
+      aria-label={`${statusInfo.label} ${service_mode === 'home_visit' ? 'home visit' : 'clinic appointment'} with ${doctor_name} on ${formattedDate}`}
+    >
       {/* Header with patient info and status */}
       <div className="flex items-center justify-between p-4 border-b border-gray-100">
         <div className="flex items-center space-x-4">
           {/* Patient avatar with initials */}
-          <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+          <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 patient-appointment__avatar">
             <span className="text-blue-600 font-bold text-lg">
-              {patient_name.split(' ')[0][0]}{patient_name.split(' ')[1]?.[0] || ''}
+              {initials}
             </span>
           </div>
           <div>
-            <p className="font-semibold text-gray-900">{patient_name}</p>
-            <p className="text-sm text-gray-500">
-              {displayRole === 'patient' ? `Dr. ${doctor_name}` : `Pat: ${patient_name.substring(0, 15)}...`}
-            </p>
+            <p className="font-semibold text-gray-900">{displayRole === 'patient' ? `Dr. ${primaryName}` : primaryName}</p>
+            <p className="text-sm text-gray-500">{service_mode === 'home_visit' ? `Home visit · ${secondaryLabel}` : secondaryLabel}</p>
           </div>
         </div>
         <div className="text-center">
           <span
             className={`px-3 py-1 rounded-full text-xs font-medium ${
               statusInfo.color
-            } bg-${statusInfo.color}/20`}
+            } bg-${statusInfo.color}/20${displayRole === 'patient' ? ` patient-appointment__status patient-appointment__status--${status || 'scheduled'}` : ''}`}
           >
             {statusInfo.label}
           </span>
@@ -78,9 +101,15 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
             <span className="material-symbols-outlined w-4 h-4 text-gray-400">calendar_today</span>
             <span>{formattedDate}</span>
           </div>
+          {service_mode === 'home_visit' && home_address && (
+            <div className="flex items-center space-x-2 col-span-2">
+              <span className="material-symbols-outlined w-4 h-4 text-gray-400">home_pin</span>
+              <span>{home_address}{city ? `, ${city}` : ''}</span>
+            </div>
+          )}
           <div className="flex items-center space-x-2">
             <span className="material-symbols-outlined w-4 h-4 text-gray-400">access_time</span>
-            <span>{time_slot} - {duration} min</span>
+            <span>{duration ? `${time_slot} - ${duration} min` : time_slot}</span>
           </div>
           <div className="flex items-center space-x-2">
             <span className="material-symbols-outlined w-4 h-4 text-gray-400">stethoscope</span>
@@ -104,6 +133,23 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
           </div>
         )}
       </div>
+
+      {displayRole === 'patient' && status === 'scheduled' && (
+        <div className="patient-appointment__cancellation px-4 pb-4 pt-3 border-t border-gray-100">
+          <p className="text-sm text-gray-600">{cancellation_message}</p>
+          {can_patient_cancel && onCancel && (
+            <button
+              type="button"
+              onClick={() => onCancel(appointment)}
+              disabled={cancelPending}
+              className="mt-3 w-full flex items-center justify-center px-3 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              <span className="material-symbols-outlined mr-1" aria-hidden="true">event_busy</span>
+              {cancelPending ? 'Cancelling…' : 'Cancel appointment'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Action buttons for admin/doctor roles */}
       {!displayRole || displayRole !== 'patient' && (
@@ -163,6 +209,6 @@ export default function AppointmentCard({ appointment, displayRole = 'admin', on
           )}
         </div>
       )}
-    </div>
+    </article>
   );
 }

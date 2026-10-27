@@ -1,34 +1,42 @@
 import axios from 'axios';
 
-// Determine if we're in development mode
-const isDevelopment = import.meta.env.MODE === 'development';
-
-// In development, use relative URLs so they go through Vite's proxy
-// In production, use the full API URL from env vars
-const API_URL = isDevelopment
-  ? '/api'
-  : (import.meta.env.VITE_API_URL || 'http://localhost:8000/api');
+// Same-origin is the safe default in every environment. Deployments with a
+// separate API origin must opt in through VITE_API_URL and the API CORS list.
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// ===================== REQUEST INTERCEPTOR =====================
+let csrfToken = null;
+
+export function setCsrfToken(value) {
+  csrfToken = value || null;
+}
+
+export function clearCsrfToken() {
+  csrfToken = null;
+}
+
+export async function initializeCsrfToken() {
+  const response = await api.get('/auth/csrf', { skipAuthRefresh: true });
+  setCsrfToken(response.data.csrf_token);
+  return response.data.csrf_token;
+}
 
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token');
-
-    if (token) {
-      config.headers.set('Authorization', `Bearer ${token}`);
+    const method = (config.method || 'get').toLowerCase();
+    if (csrfToken && ['post', 'put', 'patch', 'delete'].includes(method)) {
+      config.headers.set('X-CSRF-Token', csrfToken);
     }
-
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
 // ===================== TOKEN REFRESH =====================
@@ -36,17 +44,18 @@ api.interceptors.request.use(
 let isRefreshing = false;
 let failedQueue = [];
 
-const processQueue = (error, token = null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
-    }
+const processQueue = (error) => {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) reject(error);
+    else resolve();
   });
-
   failedQueue = [];
 };
+
+const isSessionEndpoint = (url = '') => (
+  ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout', '/auth/csrf']
+    .some((path) => url.endsWith(path))
+);
 
 // ===================== RESPONSE INTERCEPTOR =====================
 
@@ -57,72 +66,38 @@ api.interceptors.response.use(
     const originalRequest = error.config;
 
     if (
-      error.response?.status === 401 &&
-      !originalRequest._retry
+      error.response?.status !== 401
+      || !originalRequest
+      || originalRequest._retry
+      || originalRequest.skipAuthRefresh
+      || isSessionEndpoint(originalRequest.url)
     ) {
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        }).then((token) => {
-          originalRequest.headers.set(
-            'Authorization',
-            `Bearer ${token}`
-          );
-          return api(originalRequest);
-        });
-      }
-
-      originalRequest._retry = true;
-      isRefreshing = true;
-
-      const refreshToken = localStorage.getItem('refresh_token');
-
-      if (!refreshToken) {
-        isRefreshing = false;
-        return Promise.reject(error);
-      }
-
-      try {
-        const response = await api.post('/auth/refresh', {
-          refresh_token: refreshToken,
-        });
-
-        const {
-          access_token,
-          refresh_token: new_refresh_token,
-        } = response.data;
-
-        localStorage.setItem('access_token', access_token);
-        localStorage.setItem('refresh_token', new_refresh_token);
-
-        api.defaults.headers.common.Authorization = `Bearer ${access_token}`;
-
-        originalRequest.headers.set(
-          'Authorization',
-          `Bearer ${access_token}`
-        );
-
-        processQueue(null, access_token);
-
-        isRefreshing = false;
-
-        return api(originalRequest);
-      } catch (refreshError) {
-        processQueue(refreshError);
-
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-
-        window.dispatchEvent(new Event('auth_logout'));
-
-        isRefreshing = false;
-
-        return Promise.reject(refreshError);
-      }
+      return Promise.reject(error);
     }
 
-    return Promise.reject(error);
-  }
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => failedQueue.push({ resolve, reject }))
+        .then(() => api(originalRequest));
+    }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    try {
+      if (!csrfToken) await initializeCsrfToken();
+      const response = await api.post('/auth/refresh', null, { skipAuthRefresh: true });
+      setCsrfToken(response.data.csrf_token);
+      processQueue(null);
+      return api(originalRequest);
+    } catch (refreshError) {
+      processQueue(refreshError);
+      clearCsrfToken();
+      window.dispatchEvent(new Event('auth_logout'));
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
+  },
 );
 
 export default api;

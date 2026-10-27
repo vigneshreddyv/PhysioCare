@@ -18,3 +18,11 @@ class UserRepository:
     @staticmethod
     async def create(user: User) -> User:
         return await user.insert()
+
+    @staticmethod
+    async def save(user: User) -> User:
+        return await user.save()
+
+    @staticmethod
+    async def list_by_role(role: str) -> list[User]:
+        return await User.find({"role": role, "is_active": True}).sort(User.full_name).to_list()

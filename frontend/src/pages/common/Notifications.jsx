@@ -1,13 +1,7 @@
 import React from 'react';
-import { useAuth } from '../../context/useAuth';
-import { useTheme } from '../../context/useTheme';
-import Card from '../../components/common/Card';
-import Button from '../../components/common/Button';
 import Skeleton from '../../components/common/Skeleton';
 
 export default function Notifications() {
-  const { user } = useAuth();
-  const { theme, toggleTheme } = useTheme();
 
   // Placeholder: In a real app, we would fetch notifications from the backend
   const [notifications, setNotifications] = React.useState([]);

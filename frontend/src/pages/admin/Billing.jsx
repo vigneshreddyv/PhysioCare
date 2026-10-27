@@ -41,19 +41,32 @@ export default function Billing() {
   }
 
   return (
-    <div className="space-y-stack-lg animate-fade-in">
-      <div className="mb-stack-lg">
-        <h2 className="font-headline-lg text-headline-lg font-semibold text-on-surface tracking-tight">Billing & Invoices</h2>
-        <p className="font-body-md text-body-md text-on-surface-variant mt-1">Track patient subscription billing and individual session charges.</p>
+    <div className="portal-page animate-fade-in">
+      <header className="portal-hero">
+        <span className="portal-hero__eyebrow"><span className="material-symbols-outlined" aria-hidden="true">receipt_long</span>Billing records</span>
+        <h1>Session billing status</h1>
+        <p>Review the billing fields attached to appointments and record the status exposed by the existing clinic API.</p>
+      </header>
+
+      <div className="portal-trust-note" role="note">
+        <span className="material-symbols-outlined" aria-hidden="true">info</span>
+        <span><strong>Scope:</strong> this screen updates an appointment billing-status field. Amount currency is not configured, and this page does not process, collect, refund, or independently verify a payment.</span>
       </div>
 
-      <div className="bg-surface-container-lowest border border-surface-container rounded-xl shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-surface-container flex justify-between items-center bg-surface-container-low/40">
-          <h3 className="font-headline-md text-headline-md text-on-surface">Transactions</h3>
-          <span className="text-xs bg-primary/10 text-primary font-bold px-3 py-1 rounded-full">
-            Invoice Log
+      <section className="portal-section-card overflow-hidden" aria-labelledby="billing-records-heading">
+        <div className="portal-section-card__header">
+          <div>
+            <span className="portal-section__eyebrow">Appointment ledger</span>
+            <h2 id="billing-records-heading" className="font-headline-md text-headline-md">Billing records</h2>
+          </div>
+          <span className="portal-count-pill">
+            {appointments?.length || 0} records
           </span>
         </div>
+
+        {recordPaymentMutation.isError && (
+          <div className="mx-5 mt-5 patient-booking__submit-error" role="alert">Billing status could not be updated. No payment has been recorded.</div>
+        )}
 
         {isLoading ? (
           <div className="p-6 space-y-4">
@@ -62,20 +75,21 @@ export default function Billing() {
         ) : !appointments || appointments.length === 0 ? (
           <div className="p-6">
             <EmptyState 
-              title="No transactions recorded" 
-              message="Transaction entries will register here once patients book consultations."
+              title="No billing records"
+              message="Appointment billing fields will appear here after patients book consultations."
               icon="payments"
             />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <>
+          <div className="portal-desktop-table overflow-x-auto">
+            <table className="portal-data-table w-full text-left border-collapse">
               <thead>
                 <tr className="bg-surface-container border-b border-surface-container text-on-surface-variant font-label-md text-label-md">
                   <th className="p-4">Patient</th>
                   <th className="p-4">Date & Time</th>
                   <th className="p-4">Description</th>
-                  <th className="p-4">Amount</th>
+                  <th className="p-4">Recorded amount</th>
                   <th className="p-4">Status</th>
                   <th className="p-4 text-right">Actions</th>
                 </tr>
@@ -89,7 +103,10 @@ export default function Billing() {
                       <div className="text-xs text-outline">{appt.time_slot}</div>
                     </td>
                     <td className="p-4 text-on-surface-variant text-sm truncate max-w-xs">{appt.reason}</td>
-                    <td className="p-4 text-on-surface font-semibold">${appt.billing_amount.toFixed(2)}</td>
+                    <td className="p-4 text-on-surface font-semibold">
+                      {appt.billing_amount.toFixed(2)}
+                      <span className="block text-xs font-normal text-outline">Currency not configured</span>
+                    </td>
                     <td className="p-4">
                       <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
                         appt.billing_status === 'paid' 
@@ -103,12 +120,13 @@ export default function Billing() {
                       {appt.billing_status !== 'paid' ? (
                         <button 
                           onClick={() => handleMarkAsPaid(appt.id)}
-                          className="text-primary hover:text-secondary text-sm font-semibold hover:underline"
+                          className="portal-inline-action text-primary hover:text-secondary text-sm font-semibold disabled:opacity-50"
+                          disabled={recordPaymentMutation.isPending}
                         >
-                          Record Payment
+                          Mark billing status paid
                         </button>
                       ) : (
-                        <span className="text-xs text-outline font-semibold">Processed</span>
+                        <span className="text-xs text-outline font-semibold">Status recorded</span>
                       )}
                     </td>
                   </tr>
@@ -116,8 +134,27 @@ export default function Billing() {
               </tbody>
             </table>
           </div>
+          <div className="portal-mobile-list">
+            {appointments.map((appt) => (
+              <article key={appt.id} className="portal-mobile-record">
+                <div>
+                  <span className="portal-section__eyebrow">Patient</span>
+                  <h3 className="font-semibold text-on-surface">{appt.patient_name}</h3>
+                </div>
+                <div className="portal-mobile-record__row"><span>Date</span><strong>{format(new Date(appt.appointment_date), 'MMM dd, yyyy')}</strong></div>
+                <div className="portal-mobile-record__row"><span>Recorded amount</span><strong>{appt.billing_amount.toFixed(2)} · currency not configured</strong></div>
+                <div className="portal-mobile-record__row"><span>Status</span><strong>{appt.billing_status === 'paid' ? 'Paid' : 'Unpaid'}</strong></div>
+                {appt.billing_status !== 'paid' ? (
+                  <button type="button" onClick={() => handleMarkAsPaid(appt.id)} className="min-h-11 rounded-xl bg-primary text-on-primary font-semibold disabled:opacity-50" disabled={recordPaymentMutation.isPending}>Mark billing status paid</button>
+                ) : (
+                  <span className="portal-count-pill justify-center">Status recorded</span>
+                )}
+              </article>
+            ))}
+          </div>
+          </>
         )}
-      </div>
+      </section>
     </div>
   );
 }

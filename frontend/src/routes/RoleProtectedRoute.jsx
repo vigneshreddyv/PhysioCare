@@ -19,7 +19,8 @@ export default function RoleProtectedRoute({ children, allowedRoles }) {
     const fallbacks = {
       patient: '/patient/dashboard',
       doctor: '/doctor/dashboard',
-      admin: '/admin/dashboard'
+      admin: '/admin/dashboard',
+      receptionist: '/reception/dashboard'
     };
     return <Navigate to={fallbacks[user.role] || '/login'} replace />;
   }

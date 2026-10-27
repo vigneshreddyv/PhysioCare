@@ -1,141 +1,78 @@
 import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import * as z from 'zod';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../context/useAuth';
-import Button from '../../components/common/Button';
-
-const loginSchema = z.object({
-  email: z.string().email({ message: 'Invalid email address' }),
-  password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
-});
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 export default function Login() {
-  const { login } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
-  const [authError, setAuthError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneError, setPhoneError] = useState('');
 
-  const from = location.state?.from?.pathname || '/';
-
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    formState: { errors },
-  } = useForm({
-    resolver: zodResolver(loginSchema),
-  });
-
-  const onSubmit = async (data) => {
-    setAuthError('');
-    setSubmitting(true);
-    try {
-      const success = await login(data.email, data.password);
-      if (success) {
-        navigate(from, { replace: true });
-      }
-    } catch (err) {
-      setAuthError(typeof err === 'string' ? err : 'Invalid credentials. Please try again.');
-    } finally {
-      setSubmitting(false);
+  const handlePhoneContinue = (event) => {
+    event.preventDefault();
+    if (phoneNumber.length !== 10) {
+      setPhoneError('Enter a 10-digit Indian mobile number.');
+      return;
     }
-  };
 
-  // Development Quick-Fill helper
-  const handleQuickFill = (email, password) => {
-    setValue('email', email);
-    setValue('password', password);
+    setPhoneError('');
+    navigate('/verify-phone', { state: location.state });
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-surface-container-lowest border border-surface-container rounded-2xl shadow-lg p-8">
-        
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="w-12 h-12 rounded-full bg-primary-container flex items-center justify-center mx-auto mb-4">
-            <span className="material-symbols-outlined text-primary text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>spa</span>
+    <main className="auth-flow" aria-labelledby="phone-login-heading">
+      <section className="auth-flow__card auth-flow__card--entry">
+        <header className="auth-flow__brand">
+          <span className="auth-flow__brand-mark material-symbols-outlined" aria-hidden="true">accessibility_new</span>
+          <div><strong>PhysioCare</strong><span>Move better. Feel supported.</span></div>
+        </header>
+
+        <div className="auth-flow__content">
+          <div className="auth-flow__heading">
+            <p>Welcome</p>
+            <h1 id="phone-login-heading">Sign in to continue</h1>
+            <span>Use your mobile number, or continue with your registered email.</span>
           </div>
-          <h2 className="font-headline-lg text-headline-lg font-bold text-on-surface">PhysioCare Portal</h2>
-          <p className="text-sm text-on-surface-variant mt-2">Sign in to manage your appointments and health records</p>
+
+          <form className="auth-flow__form" onSubmit={handlePhoneContinue} noValidate>
+            <div className="auth-flow__field">
+              <label htmlFor="login-phone">Mobile number</label>
+              <div className="auth-flow__phone-field">
+                <span aria-hidden="true">+91</span>
+                <input
+                  id="login-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
+                  value={phoneNumber}
+                  onChange={(event) => {
+                    setPhoneNumber(event.target.value.replace(/\D/g, '').slice(0, 10));
+                    if (phoneError) setPhoneError('');
+                  }}
+                  placeholder="10-digit mobile number"
+                  aria-invalid={Boolean(phoneError)}
+                  aria-describedby={phoneError ? 'login-phone-error' : 'login-phone-note'}
+                />
+              </div>
+              {phoneError ? (
+                <p id="login-phone-error" className="auth-flow__field-error" role="alert">{phoneError}</p>
+              ) : (
+                <p id="login-phone-note" className="auth-flow__field-note">Your number stays on this screen. No message is sent.</p>
+              )}
+            </div>
+
+            <button type="submit" className="auth-flow__primary">Continue</button>
+          </form>
+
+          <div className="auth-flow__divider" aria-hidden="true"><span>or</span></div>
+
+          <Link to="/login/email" state={location.state} className="auth-flow__secondary">
+            <span className="material-symbols-outlined" aria-hidden="true">mail</span>
+            Continue with email
+          </Link>
+
+          <p className="auth-flow__register">New to PhysioCare? <Link to="/register" state={location.state}>Create an account</Link></p>
         </div>
-
-        {/* Error notification */}
-        {authError && (
-          <div className="mb-6 p-4 bg-error-container/20 border border-error/10 text-error rounded-xl text-sm font-semibold flex items-center gap-2">
-            <span className="material-symbols-outlined text-base">error</span>
-            {authError}
-          </div>
-        )}
-
-        {/* Form */}
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-          <div className="space-y-1">
-            <label className="font-label-md text-label-md text-on-surface-variant" htmlFor="email">Email Address</label>
-            <input
-              id="email"
-              type="email"
-              className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-4 font-body-md text-body-md focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-              placeholder="e.g. john@example.com"
-              {...register('email')}
-            />
-            {errors.email && (
-              <p className="text-xs text-error font-semibold mt-1">{errors.email.message}</p>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <label className="font-label-md text-label-md text-on-surface-variant" htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              className="w-full rounded-xl border border-outline-variant bg-surface-container-low p-4 font-body-md text-body-md focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-              placeholder="••••••••"
-              {...register('password')}
-            />
-            {errors.password && (
-              <p className="text-xs text-error font-semibold mt-1">{errors.password.message}</p>
-            )}
-          </div>
-
-          <Button
-            type="submit"
-            className="w-full mt-6 py-4"
-            disabled={submitting}
-          >
-            {submitting ? 'Signing in...' : 'Sign In'}
-          </Button>
-        </form>
-
-        {/* Development Quick-Fill section */}
-        <div className="mt-8 border-t border-surface-container pt-6">
-          <p className="text-xs font-semibold text-outline text-center mb-3">TEST ACCOUNTS QUICK FILL</p>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              onClick={() => handleQuickFill('admin@physiocare.com', 'admin123')}
-              className="text-[11px] font-semibold py-2 px-1 bg-surface-container-low border border-surface-container hover:bg-primary-container/20 hover:border-primary rounded-xl text-primary transition-colors"
-            >
-              Admin
-            </button>
-            <button
-              onClick={() => handleQuickFill('sarah.miller@physiocare.com', 'password123')}
-              className="text-[11px] font-semibold py-2 px-1 bg-surface-container-low border border-surface-container hover:bg-primary-container/20 hover:border-primary rounded-xl text-primary transition-colors"
-            >
-              Doctor
-            </button>
-            <button
-              onClick={() => handleQuickFill('john.doe@gmail.com', 'password123')}
-              className="text-[11px] font-semibold py-2 px-1 bg-surface-container-low border border-surface-container hover:bg-primary-container/20 hover:border-primary rounded-xl text-primary transition-colors"
-            >
-              Patient
-            </button>
-          </div>
-        </div>
-        
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

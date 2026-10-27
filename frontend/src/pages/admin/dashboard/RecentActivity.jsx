@@ -9,16 +9,16 @@ export default function RecentActivity({ notifications }) {
   // If no notifications are provided, show an empty state
   if (!notifications || notifications.length === 0) {
     return (
-      <div className="space-y-4" aria-labelledby="healthcare-widgets-heading">
+      <div className="portal-dashboard-card space-y-5 p-5 md:p-6" aria-labelledby="healthcare-widgets-heading">
         <h2 id="healthcare-widgets-heading" className="text-lg font-semibold">
-          Healthcare Widgets
+          Operations
         </h2>
 
         {/* Notifications/Alerts */}
         <div className="border-b pb-3">
           <h3 className="text-lg font-semibold mb-3 flex items-center justify-between">
             Notifications
-            <Button variant="text" size="xs" className="p-1" aria-label="View all notifications" onClick={() => navigate('/admin/notifications')}>
+            <Button variant="text" size="xs" className="p-1" aria-label="View all notifications" onClick={() => navigate('/notifications')}>
               View All
             </Button>
           </h3>
@@ -37,16 +37,16 @@ export default function RecentActivity({ notifications }) {
   }
 
   return (
-    <div className="space-y-4" aria-labelledby="healthcare-widgets-heading">
+    <div className="portal-dashboard-card space-y-5 p-5 md:p-6" aria-labelledby="healthcare-widgets-heading">
       <h2 id="healthcare-widgets-heading" className="text-lg font-semibold">
-        Healthcare Widgets
+        Operations
       </h2>
 
       {/* Notifications/Alerts */}
       <div className="border-b pb-3">
         <h3 className="text-lg font-semibold mb-3 flex items-center justify-between">
           Notifications
-          <Button variant="text" size="xs" className="p-1" aria-label="View all notifications" onClick={() => navigate('/admin/notifications')}>
+          <Button variant="text" size="xs" className="p-1" aria-label="View all notifications" onClick={() => navigate('/notifications')}>
             View All
           </Button>
         </h3>

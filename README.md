@@ -2,6 +2,8 @@
 
 > **A Complete Digital Healthcare & Physiotherapy Management Platform**
 
+> **Development status:** this repository contains a local client-demo build, not a production healthcare system. Some modules listed below are roadmap items or guarded demonstrations. See [`docs/CLIENT_DEMO_READINESS.md`](docs/CLIENT_DEMO_READINESS.md) for the source-backed implementation boundary and [`docs/LOCAL_DEMO_START.md`](docs/LOCAL_DEMO_START.md) for portable setup instructions.
+
 ![Status](https://img.shields.io/badge/Status-Under%20Development-orange)
 ![Backend](https://img.shields.io/badge/Backend-FastAPI-green)
 ![Frontend](https://img.shields.io/badge/Frontend-React-blue)

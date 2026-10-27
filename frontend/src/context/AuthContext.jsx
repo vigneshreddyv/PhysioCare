@@ -1,36 +1,42 @@
 import React, { createContext, useState, useEffect } from 'react';
-import api from '../services/api';
+import { useQueryClient } from '@tanstack/react-query';
+import api, {
+  clearCsrfToken,
+  initializeCsrfToken,
+  setCsrfToken,
+} from '../services/api';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  const fetchUserProfile = async () => {
+  const fetchUserProfile = async ({ initializeCsrf = false } = {}) => {
     try {
+      if (initializeCsrf) await initializeCsrfToken();
       const response = await api.get('/auth/me');
       setUser(response.data);
-    } catch (error) {
-      // Token is invalid, clear session
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
+      return true;
+    } catch {
+      clearCsrfToken();
       setUser(null);
+      return false;
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-
-    if (token) {
-      fetchUserProfile();
-    } else {
-      setLoading(false);
-    }
+    // Cookie sessions intentionally replace and invalidate legacy browser tokens.
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    fetchUserProfile({ initializeCsrf: true });
 
     const handleGlobalLogout = () => {
+      clearCsrfToken();
+      queryClient.clear();
       setUser(null);
     };
 
@@ -39,7 +45,7 @@ export function AuthProvider({ children }) {
     return () => {
       window.removeEventListener('auth_logout', handleGlobalLogout);
     };
-  }, []);
+  }, [queryClient]);
 
   const login = async (email, password) => {
     setLoading(true);
@@ -50,10 +56,7 @@ export function AuthProvider({ children }) {
         password,
       });
 
-      const { access_token, refresh_token } = response.data;
-
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      setCsrfToken(response.data.csrf_token);
 
       await fetchUserProfile();
 
@@ -84,10 +87,14 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    setUser(null);
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout');
+    } finally {
+      clearCsrfToken();
+      queryClient.clear();
+      setUser(null);
+    }
   };
 
   const value = {
@@ -95,6 +102,7 @@ export function AuthProvider({ children }) {
     loading,
     login,
     logout,
+    refreshUserProfile: fetchUserProfile,
     isAuthenticated: !!user,
   };
 

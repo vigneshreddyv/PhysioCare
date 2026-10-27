@@ -116,12 +116,12 @@ export default function AdminDashboard() {
   }
 
   return (
-    <>
+    <div className="portal-page animate-fade-in">
       <DashboardHeader
         date={new Date()}
         notifications={notifications}
       />
-      <div className="grid gap-6">
+      <div className="portal-dashboard-grid grid gap-6">
         <DashboardStats
           stats={stats}
           appointments={appointments}
@@ -131,7 +131,7 @@ export default function AdminDashboard() {
           statsLoading={statsLoading}
           appointments={appointments}
         />
-    <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <RecentAppointments
             appointments={appointments}
             appointmentsLoading={appointmentsLoading}
@@ -143,6 +143,6 @@ export default function AdminDashboard() {
           />
         </div>
       </div>
-    </>
+    </div>
   );
 }

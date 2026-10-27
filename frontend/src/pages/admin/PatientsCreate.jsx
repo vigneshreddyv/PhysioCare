@@ -4,8 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
-import Skeleton from '../../components/common/Skeleton';
-import ErrorState from '../../components/common/ErrorState';
 
 export default function PatientsCreate() {
   const navigate = useNavigate();
@@ -131,7 +129,14 @@ export default function PatientsCreate() {
             <option value="inactive">Inactive</option>
             <option value="pending">Pending</option>
           </select>
+          <p className="mt-2 text-xs text-on-surface-variant">This stores the existing administrative status label only; it does not create a plan, entitlement, or payment.</p>
         </div>
+
+        {createPatient.isError && (
+          <p className="patient-booking__submit-error" role="alert">
+            This patient could not be registered. The current API does not expose an authorized administrative patient-creation workflow.
+          </p>
+        )}
 
         <Button
           type="submit"

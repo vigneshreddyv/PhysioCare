@@ -30,7 +30,9 @@ export default function Analytics() {
   } = useQuery({
     queryKey: ['analyticsStats', timeRange],
     queryFn: async () => {
-      const response = await api.get('/analytics/stats');
+      const response = await api.get('/analytics/stats', {
+        params: { days: timeRange === 'quarter' ? 90 : 30 },
+      });
       return response.data;
     }
   });
@@ -50,31 +52,17 @@ export default function Analytics() {
   };
 
   // Format data for Pie/Donut Chart (Top Specializations)
-  const pieData = stats?.specializations || [
-    { name: 'Physical Therapy', value: 45 },
-    { name: 'Sports Massage', value: 30 },
-    { name: 'Chiropractic', value: 25 }
-  ];
+  const pieData = stats?.doctor_specializations || [];
 
   const pieColors = [colors.primary, colors.secondaryLight, colors.lightBlue];
 
   // Format data for Bar Chart (Revenue Trend)
-  const barData = stats?.revenue_trend || [
-    { name: 'Jan', revenue: 12000 },
-    { name: 'Feb', revenue: 14000 },
-    { name: 'Mar', revenue: 10000 },
-    { name: 'Apr', revenue: 15000 },
-    { name: 'May', revenue: 17000 },
-    { name: 'Jun', revenue: 21000 }
-  ];
+  const barData = stats?.revenue_trend || [];
 
   // Format data for Area/Line Chart (Appointments per Week)
-  const areaData = stats?.appointments_per_week || [
-    { name: 'Week 1', appointments: 120 },
-    { name: 'Week 2', appointments: 180 },
-    { name: 'Week 3', appointments: 220 },
-    { name: 'Week 4', appointments: 260 }
-  ];
+  const areaData = stats?.appointments_per_week || [];
+  const hasAppointments = areaData.some((item) => item.appointments > 0);
+  const hasRecordedRevenue = barData.some((item) => item.revenue > 0);
 
   return (
     <div className="space-y-stack-lg animate-fade-in">
@@ -117,27 +105,27 @@ export default function Analytics() {
         ) : (
           <>
             <StatCard
-              title="Total Appointments"
-              value={stats?.total_appointments ? (stats.total_appointments * 4).toLocaleString() : '1,248'}
+              title={`Appointments (${stats?.period_days || 30} days)`}
+              value={(stats?.period_appointments ?? 0).toLocaleString()}
               icon="calendar_today"
-              changeText="+12% vs last period"
-              changeType="up"
+              changeText="No prior-period comparison available"
+              changeType="flat"
               colorVariant="primary"
             />
             <StatCard
-              title="Total Revenue"
-              value={`$${stats?.total_revenue ? (stats.total_revenue * 5.9).toLocaleString(undefined, {maximumFractionDigits: 0}) : '84.2k'}`}
+              title="Recorded Paid Total"
+              value={`$${(stats?.recorded_paid_total ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
               icon="payments"
-              changeText="+8.4% vs last period"
-              changeType="up"
+              changeText="From appointment records; no payment provider connected"
+              changeType="flat"
               colorVariant="secondary"
             />
             <StatCard
               title="Cancellation Rate"
-              value={`${stats?.cancellation_rate ? stats.cancellation_rate : '4.1'}%`}
+              value={`${stats?.cancellation_rate ?? 0}%`}
               icon="block"
-              changeText="-2% from last period"
-              changeType="down"
+              changeText="Calculated from appointments in this period"
+              changeType="flat"
               colorVariant="tertiary"
             />
           </>
@@ -156,7 +144,7 @@ export default function Analytics() {
           <div className="flex-1 w-full relative">
             {isLoading ? (
               <div className="absolute inset-0 bg-surface-container-low animate-pulse rounded-lg" />
-            ) : (
+            ) : hasAppointments ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={areaData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
@@ -180,6 +168,10 @@ export default function Analytics() {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center text-center text-sm text-on-surface-variant">
+                No appointments are recorded in this period.
+              </div>
             )}
           </div>
         </div>
@@ -187,13 +179,13 @@ export default function Analytics() {
         {/* Top Specializations Donut chart */}
         <div className="bg-surface-container-lowest border border-surface-container rounded-xl p-6 shadow-sm flex flex-col h-96">
           <div>
-            <h3 className="font-headline-md text-headline-md font-bold text-on-surface">Top Specializations</h3>
-            <p className="text-sm text-on-surface-variant">Volume share by department</p>
+            <h3 className="font-headline-md text-headline-md font-bold text-on-surface">Doctor Specializations</h3>
+            <p className="text-sm text-on-surface-variant">Current doctor count by recorded specialization</p>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center relative mt-4">
             {isLoading ? (
               <div className="w-40 h-40 rounded-full border-8 border-surface-container border-t-primary animate-pulse" />
-            ) : (
+            ) : pieData.length > 0 ? (
               <>
                 <ResponsiveContainer width="100%" height="80%">
                   <PieChart>
@@ -215,8 +207,8 @@ export default function Analytics() {
                 </ResponsiveContainer>
                 {/* Custom Donut center watermark label */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none" style={{ height: '80%' }}>
-                  <span className="text-2xl font-bold text-on-surface">3</span>
-                  <span className="text-[10px] text-on-surface-variant font-semibold">Top Services</span>
+                  <span className="text-2xl font-bold text-on-surface">{pieData.reduce((total, item) => total + item.value, 0)}</span>
+                  <span className="text-[10px] text-on-surface-variant font-semibold">Doctors</span>
                 </div>
                 
                 {/* Custom legends matching the design */}
@@ -224,14 +216,16 @@ export default function Analytics() {
                   {pieData.map((item, index) => (
                     <div key={item.name} className="flex flex-col items-center">
                       <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pieColors[index] }} />
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pieColors[index % pieColors.length] }} />
                         <span className="text-[10px] font-semibold text-on-surface truncate max-w-[64px]">{item.name}</span>
                       </div>
-                      <span className="text-xs font-bold text-on-surface-variant mt-0.5">{item.value}%</span>
+                      <span className="text-xs font-bold text-on-surface-variant mt-0.5">{item.value}</span>
                     </div>
                   ))}
                 </div>
               </>
+            ) : (
+              <p className="text-center text-sm text-on-surface-variant">No doctor specialization data is available yet.</p>
             )}
           </div>
         </div>
@@ -239,13 +233,13 @@ export default function Analytics() {
         {/* Revenue Trend chart */}
         <div className="lg:col-span-3 bg-surface-container-lowest border border-surface-container rounded-xl p-6 shadow-sm flex flex-col h-96">
           <div className="mb-4">
-            <h3 className="font-headline-md text-headline-md font-bold text-on-surface">Revenue Trend</h3>
-            <p className="text-sm text-on-surface-variant">6-Month Trajectory</p>
+            <h3 className="font-headline-md text-headline-md font-bold text-on-surface">Recorded Paid Totals</h3>
+            <p className="text-sm text-on-surface-variant">Six months of appointment records marked paid; not payment-provider settlement data</p>
           </div>
           <div className="flex-1 w-full relative">
             {isLoading ? (
               <div className="absolute inset-0 bg-surface-container-low animate-pulse rounded-lg" />
-            ) : (
+            ) : hasRecordedRevenue ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <XAxis dataKey="name" stroke={colors.tertiary} fontSize={11} tickLine={false} />
@@ -265,6 +259,10 @@ export default function Analytics() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            ) : (
+              <div className="h-full grid place-items-center text-center text-sm text-on-surface-variant">
+                No appointments are recorded as paid in the last six months.
+              </div>
             )}
           </div>
         </div>

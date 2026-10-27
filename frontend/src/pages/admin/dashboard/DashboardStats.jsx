@@ -2,7 +2,10 @@ import React from 'react';
 import { StatCard } from '../../../components/features';
 
 export default function DashboardStats({ stats, appointments }) {
-  const appointmentsToday = appointments?.length ?? 0;
+  const today = new Date().toDateString();
+  const appointmentsToday = (appointments || []).filter(
+    (appointment) => new Date(appointment.appointment_date).toDateString() === today,
+  ).length;
 
   return (
     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -11,21 +14,17 @@ export default function DashboardStats({ stats, appointments }) {
         title="Appointments Today"
         value={appointmentsToday}
         icon="calendar_today"
-        changeText={stats?.appointments_growth
-          ? `+${stats.appointments_growth}% vs last week`
-          : appointmentsToday > 0 ? `+${appointmentsToday} today` : 'No appointments'}
-        changeType={appointmentsToday > 0 ? "up" : "flat"}
+        changeText={appointmentsToday > 0 ? `${appointmentsToday} scheduled today` : 'No appointments scheduled today'}
+        changeType="flat"
         colorVariant="blue"
       />
 
       {/* Active Patients */}
       <StatCard
-        title="Active Patients"
-        value={stats?.active_subscriptions ?? 0}
+        title="Registered Patients"
+        value={stats?.total_patients ?? 0}
         icon="person"
-        changeText={stats?.active_growth
-          ? `+${stats.active_growth}% vs last month`
-          : 'Active patients'}
+        changeText={`${stats?.new_patients ?? 0} registered in the selected period`}
         changeType="flat"
         colorVariant="green"
       />
@@ -36,21 +35,19 @@ export default function DashboardStats({ stats, appointments }) {
         value={stats?.total_doctors ?? 0}
         icon="stethoscope"
         changeText={stats?.total_doctors
-          ? `${stats.total_doctors} licensed professionals`
+          ? `${stats.total_doctors} doctor profiles`
           : 'No doctors registered'}
         changeType="flat"
         colorVariant="purple"
       />
 
-      {/* Revenue */}
+      {/* Recorded billing */}
       <StatCard
-        title="Monthly Revenue"
-        value={stats?.total_revenue ? `$${stats.total_revenue.toLocaleString()}` : '$0'}
+        title="Recorded Paid Total"
+        value={`$${(stats?.recorded_paid_total ?? 0).toLocaleString()}`}
         icon="attach_money"
-        changeText={stats?.revenue_growth
-          ? `+${stats.revenue_growth}% vs last month`
-          : 'Revenue tracking'}
-        changeType={stats?.revenue_growth && stats.revenue_growth >= 0 ? "up" : "down"}
+        changeText="Appointment records only; no payment provider connected"
+        changeType="flat"
         colorVariant="blue"
       />
     </div>

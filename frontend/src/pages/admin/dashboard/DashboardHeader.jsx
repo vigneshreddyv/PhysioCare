@@ -20,23 +20,24 @@ export default function DashboardHeader() {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-6">
+    <header className="portal-hero flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          {greeting}, {user?.full_name && typeof user.full_name === 'string' ? user.full_name.split(' ')[0] : 'Dr.'}!
+        <span className="portal-hero__eyebrow"><span className="material-symbols-outlined" aria-hidden="true">monitoring</span>Clinic operations</span>
+        <h1>
+          {greeting}, {user?.full_name && typeof user.full_name === 'string' ? user.full_name.split(' ')[0] : 'team'}.
         </h1>
-        <p className="text-gray-600">
-          Overview of your clinic's performance today • {formattedDate}
+        <p>
+          Review the clinic's current workload and operational indicators for {formattedDate}.
         </p>
       </div>
-      <div className="flex space-x-3 mt-4 lg:mt-0">
-        <Button variant="outline" size="sm" onClick={() => navigate('/admin/appointment-booking')}>
+      <div className="portal-hero__actions lg:justify-end lg:mt-0">
+        <Button variant="outline" size="sm" className="bg-white/10 !text-white !border-white/30 hover:!bg-white/20" onClick={() => navigate('/admin/appointment-booking')}>
           Schedule Appointment
         </Button>
-        <Button variant="primary" size="sm" onClick={() => navigate('/admin/patients-create')}>
+        <Button variant="patientPrimary" size="sm" onClick={() => navigate('/admin/patients-create')}>
           New Patient
         </Button>
       </div>
-    </div>
+    </header>
   );
 }
