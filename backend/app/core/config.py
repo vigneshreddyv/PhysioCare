@@ -1,5 +1,8 @@
+import json
+from typing import Any, Iterator
+
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, SecretStr, model_validator
 from datetime import datetime
 import os
 from pathlib import Path
@@ -12,6 +15,22 @@ HOME_VISIT_DEMO_DATABASE_NAME = "physiocare_home_visit_demo"
 HOME_VISIT_DEMO_MONGODB_URL = "mongodb://127.0.0.1:27019"
 HOME_VISIT_DEMO_BACKEND_PORT = 8002
 HOME_VISIT_DEMO_FRONTEND_ORIGIN = "http://127.0.0.1:5176"
+
+
+# These settings contain credentials or credential material. Keep their
+# runtime types as strings for existing consumers, but never expose their
+# values through Settings diagnostics or serialization.
+SECRET_SETTINGS_FIELDS = frozenset(
+    {
+        "MONGODB_URL",
+        "JWT_SECRET",
+        "JWT_REFRESH_SECRET",
+        "RAZORPAY_KEY_SECRET",
+        "RAZORPAY_WEBHOOK_SECRET",
+    }
+)
+_REDACTED_REPR = SecretStr("redacted")
+_REDACTED_PLACEHOLDER = "**********"
 
 
 def lab_demo_home() -> Path:
@@ -98,6 +117,24 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+    def __repr_args__(self) -> Iterator[tuple[str, Any]]:
+        """Mask credential-bearing settings in repr/str diagnostics."""
+        for name, value in super().__repr_args__():
+            yield name, _REDACTED_REPR if name in SECRET_SETTINGS_FIELDS else value
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        """Return a diagnostic-safe settings mapping."""
+        dumped = super().model_dump(**kwargs)
+        for name in SECRET_SETTINGS_FIELDS:
+            if name in dumped:
+                dumped[name] = _REDACTED_PLACEHOLDER
+        return dumped
+
+    def model_dump_json(self, **kwargs: Any) -> str:
+        """Return diagnostic-safe JSON without serializing credential values."""
+        indent = kwargs.pop("indent", None)
+        return json.dumps(self.model_dump(**kwargs), default=str, indent=indent)
 
     @model_validator(mode="after")
     def validate_jwt_secrets(self):

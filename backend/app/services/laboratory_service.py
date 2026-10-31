@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, time
 from typing import List, Optional
 from beanie import PydanticObjectId
@@ -9,6 +10,9 @@ from app.repositories.laboratory_test_repository import LaboratoryTestRepository
 from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
 from app.models.user import User
 from app.models.patient import Patient
+
+
+logger = logging.getLogger(__name__)
 
 
 class LaboratoryService:
@@ -132,8 +136,10 @@ class LaboratoryService:
                     notification_type="laboratory",
                     related_entity_id=str(booking.id)
                 )
-        except Exception as e:
-            print(f"Failed to create laboratory booking notification: {e}")
+        except Exception:
+            logger.warning(
+                "Laboratory follow-up failed: operation=booking_notification"
+            )
 
         return booking
 
@@ -231,7 +237,9 @@ class LaboratoryService:
                         notification_type="laboratory",
                         related_entity_id=str(booking.id)
                     )
-        except Exception as e:
-            print(f"Failed to create status update notification: {e}")
+        except Exception:
+            logger.warning(
+                "Laboratory follow-up failed: operation=status_notification"
+            )
 
         return booking

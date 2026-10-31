@@ -1,8 +1,12 @@
+import logging
 from typing import List, Optional
 from beanie import PydanticObjectId
 from datetime import datetime
 from app.models.report import Report
 from app.repositories.report_repository import ReportRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 class ReportService:
@@ -36,8 +40,10 @@ class ReportService:
             from app.services.laboratory_service import LaboratoryService
             try:
                 await LaboratoryService.update_booking_status(booking_id, "completed")
-            except Exception as e:
-                print(f"Failed to auto transition lab booking status: {e}")
+            except Exception:
+                logger.warning(
+                    "Clinical report follow-up failed: operation=lab_status_transition"
+                )
 
         # Notify patient
         try:
@@ -52,8 +58,10 @@ class ReportService:
                     notification_type="clinical",
                     related_entity_id=str(created_report.id)
                 )
-        except Exception as e:
-            print(f"Failed to create report notification: {e}")
+        except Exception:
+            logger.warning(
+                "Clinical report follow-up failed: operation=patient_notification"
+            )
 
         return created_report
 
