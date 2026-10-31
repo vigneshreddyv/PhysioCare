@@ -21,6 +21,7 @@ export default function PatientLayout() {
     { to: '/patient/book', label: 'Book', icon: 'calendar_month' },
     { to: '/patient/home-visits', label: 'Home visits', mobileLabel: 'Visits', icon: 'home_health' },
     { to: '/patient/history', label: 'History', icon: 'history' },
+    { to: '/patient/payments', label: 'Payments', icon: 'payments' },
     { to: '/patient/profile', label: 'Profile', icon: 'person', mobile: true },
   ];
   const mobileNavItems = navItems.filter((item) => item.mobile);

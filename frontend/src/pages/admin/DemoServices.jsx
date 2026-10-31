@@ -4,7 +4,6 @@ import api from '../../services/api';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
 import Skeleton from '../../components/common/Skeleton';
-import AdminLabRequestsPanel from './AdminLabRequestsPanel';
 
 export default function DemoServices() {
   const queryClient = useQueryClient();
@@ -76,8 +75,6 @@ export default function DemoServices() {
           </div>
         )}
       </section>
-
-      <AdminLabRequestsPanel />
 
       <section className="portal-section-card" aria-labelledby="admin-home-requests-heading">
         <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Clinic review</span><h2 id="admin-home-requests-heading" className="font-headline-md text-headline-md">Home-visit requests</h2></div><span className="portal-count-pill">{requests.data?.length || 0} requests</span></div>

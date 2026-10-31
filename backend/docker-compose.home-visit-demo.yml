@@ -1,0 +1,31 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: physiocare-home-visit-demo-mongodb
+    command: ["mongod", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
+    ports:
+      - "127.0.0.1:27019:27017"
+    volumes:
+      - physiocare-home-visit-demo-mongodb-data:/data/db
+      - physiocare-home-visit-demo-configdb:/data/configdb
+    networks:
+      - home-visit-demo
+    restart: "no"
+
+volumes:
+  physiocare-home-visit-demo-mongodb-data:
+    name: backend_physiocare-home-visit-demo-mongodb-data
+    external: true
+  physiocare-home-visit-demo-configdb:
+    name: 320bdd74db72accca6269478ed2d125666d4eb3f88dde3cb7036675732572ea2
+    external: true
+
+networks:
+  home-visit-demo:
+    name: physiocare-home-visit-demo-network

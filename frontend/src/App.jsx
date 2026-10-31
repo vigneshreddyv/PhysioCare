@@ -26,6 +26,13 @@ const PatientDashboard = lazy(() => import('./pages/patient/PatientDashboard'));
 const BookAppointment = lazy(() => import('./pages/patient/BookAppointment'));
 const PatientHistory = lazy(() => import('./pages/patient/PatientHistory'));
 const PatientProfile = lazy(() => import('./pages/patient/PatientProfile'));
+const PatientSettings = lazy(() => import('./pages/patient/PatientSettings'));
+const PatientAppointments = lazy(() => import('./pages/patient/PatientAppointments'));
+const PatientCarePlan = lazy(() => import('./pages/patient/PatientCarePlan'));
+const PatientExercises = lazy(() => import('./pages/patient/PatientExercises'));
+const PatientProgress = lazy(() => import('./pages/patient/PatientProgress'));
+const PatientReports = lazy(() => import('./pages/patient/PatientReports'));
+const PatientPaymentHistory = lazy(() => import('./pages/patient/PatientPaymentHistory'));
 const HomeVisitRequests = lazy(() => import('./pages/patient/HomeVisitRequests'));
 const PatientServices = lazy(() => import('./pages/patient/PatientServices'));
 const ServiceDetails = lazy(() => import('./pages/patient/ServiceDetails'));
@@ -34,6 +41,9 @@ const LaboratoryRequests = lazy(() => import('./pages/patient/LaboratoryRequests
 const DoctorDashboard = lazy(() => import('./pages/doctor/DoctorDashboard'));
 const HomeVisits = lazy(() => import('./pages/doctor/HomeVisits'));
 const DoctorPatientHistory = lazy(() => import('./pages/doctor/DoctorPatientHistory'));
+const CarePlanManagement = lazy(() => import('./pages/admin/CarePlanManagement'));
+const ExerciseAssignmentManagement = lazy(() => import('./pages/admin/ExerciseAssignmentManagement'));
+const ReportAuthoring = lazy(() => import('./pages/admin/ReportAuthoring'));
 
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
 const PatientsList = lazy(() => import('./pages/admin/PatientsList'));
@@ -42,10 +52,12 @@ const Analytics = lazy(() => import('./pages/admin/Analytics'));
 const Billing = lazy(() => import('./pages/admin/Billing'));
 const Settings = lazy(() => import('./pages/admin/Settings'));
 const AppointmentBooking = lazy(() => import('./pages/admin/AppointmentBooking'));
-const Notifications = lazy(() => import('./pages/admin/Notifications'));
+const Notifications = lazy(() => import('./pages/common/Notifications'));
 const AdminPatientEdit = lazy(() => import('./pages/admin/AdminPatientEdit'));
 const AdminPatientHistory = lazy(() => import('./pages/admin/AdminPatientHistory'));
 const PatientsCreate = lazy(() => import('./pages/admin/PatientsCreate'));
+const StaffManagement = lazy(() => import('./pages/admin/StaffManagement'));
+const AdminLaboratoryRequests = lazy(() => import('./pages/admin/AdminLaboratoryRequests'));
 const DemoServices = lazy(() => import('./pages/admin/DemoServices'));
 const ClinicianSchedules = lazy(() => import('./pages/admin/ClinicianSchedules'));
 const ReceptionistDashboard = lazy(() => import('./pages/receptionist/ReceptionistDashboard'));
@@ -170,10 +182,18 @@ export default function App() {
                 <Route path="book" element={<BookAppointment />} />
                 <Route path="history" element={<PatientHistory />} />
                 <Route path="profile" element={<PatientProfile />} />
+                <Route path="settings" element={<PatientSettings />} />
+                <Route path="appointments" element={<PatientAppointments />} />
                 <Route path="home-visits" element={<HomeVisitRequests />} />
                 <Route path="services" element={<PatientServices />} />
                 <Route path="services/:serviceKey" element={<ServiceDetails />} />
                 <Route path="laboratory" element={<LaboratoryRequests />} />
+                <Route path="care-plan" element={<PatientCarePlan />} />
+                <Route path="exercises" element={<PatientExercises />} />
+                <Route path="progress" element={<PatientProgress />} />
+                <Route path="reports" element={<PatientReports />} />
+                <Route path="payments" element={<PatientPaymentHistory />} />
+                <Route path="notifications" element={<Notifications />} />
               </Route>
 
               {/* Doctor Routes */}
@@ -189,9 +209,14 @@ export default function App() {
               >
                 <Route path="dashboard" element={<DoctorDashboard />} />
                 <Route path="patients" element={<PatientsList />} />
+                <Route path="care-management" element={<PatientsList />} />
+                <Route path="reports/new" element={<ReportAuthoring />} />
                 <Route path="patients/:patientId" element={<DoctorPatientHistory />} />
+                <Route path="patients/:patientId/care-plan" element={<CarePlanManagement />} />
+                <Route path="patients/:patientId/exercises" element={<ExerciseAssignmentManagement />} />
                 <Route path="home-visits" element={<HomeVisits />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="notifications" element={<Notifications />} />
               </Route>
 
               {/* Admin Routes */}
@@ -207,14 +232,21 @@ export default function App() {
               >
                 <Route path="dashboard" element={<AdminDashboard />} />
                 <Route path="patients" element={<PatientsList />} />
+                <Route path="care-management" element={<PatientsList />} />
+                <Route path="reports/new" element={<ReportAuthoring />} />
                 <Route path="patients-create" element={<PatientsCreate />} />
+                <Route path="staff" element={<StaffManagement />} />
+                <Route path="laboratory" element={<AdminLaboratoryRequests />} />
                 <Route path="patients-edit/:id" element={<AdminPatientEdit />} />
                 <Route path="patients-history/:id" element={<AdminPatientHistory />} />
+                <Route path="patients/:patientId/care-plan" element={<CarePlanManagement />} />
+                <Route path="patients/:patientId/exercises" element={<ExerciseAssignmentManagement />} />
                 <Route path="doctors" element={<DoctorsList />} />
                 <Route path="schedules/:doctorId" element={<ClinicianSchedules />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="billing" element={<Billing />} />
                 <Route path="settings" element={<Settings />} />
+                <Route path="notifications" element={<Notifications />} />
                 <Route path="appointment-booking" element={<AppointmentBooking />} />
                 <Route path="demo-services" element={<DemoServices />} />
               </Route>

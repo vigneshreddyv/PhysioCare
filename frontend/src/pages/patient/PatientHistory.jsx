@@ -73,12 +73,29 @@ function AppointmentRecord({ appointment, onCancel, cancelPending }) {
           <dt>Location</dt>
           <dd>{isHomeVisit ? `Home visit${appointment.city ? ` · ${appointment.city}` : ''}` : 'PhysioCare clinic'}</dd>
         </div>
+        <div>
+          <dt>Payment</dt>
+          <dd>
+            {appointment.payment_status === 'reconciliation_required'
+              ? 'Captured; clinic reconciliation required'
+              : appointment.billing_status === 'paid'
+              ? 'Paid'
+              : `${appointment.payment_status === 'failed' ? 'Payment failed' : appointment.payment_status === 'abandoned' ? 'Checkout abandoned' : appointment.payment_status === 'cancelled' ? 'Checkout cancelled' : 'Payment pending'} - ${appointment.billing_currency ? `INR ${Number(appointment.billing_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'currency not configured'}`}
+          </dd>
+        </div>
       </dl>
 
       {appointment.reason && (
         <div className="patient-visit-record__reason">
           <span>Visit note</span>
           <p>{appointment.reason}</p>
+        </div>
+      )}
+
+      {isScheduled && !isHomeVisit && appointment.billing_status !== 'paid' && (
+        <div className="patient-visit-record__payment-action">
+          <span>Payment is {appointment.payment_status === 'failed' ? 'failed' : 'pending'}.</span>
+          <Link to={`/patient/book?paymentAppointmentId=${appointment.id}`}>Continue to payment</Link>
         </div>
       )}
 
@@ -225,6 +242,7 @@ export default function PatientHistory() {
         isOpen={Boolean(cancelTarget)}
         onClose={() => { if (!cancelMutation.isPending) setCancelTarget(null); }}
         title="Cancel clinic appointment?"
+        panelClassName="patient-history-cancel-modal"
       >
         {cancelTarget && (
           <div className="patient-history__cancel-dialog">

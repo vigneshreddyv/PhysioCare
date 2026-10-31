@@ -6,10 +6,28 @@ import { format, parseISO } from 'date-fns';
 import api from '../../services/api';
 import DoctorCard from '../../components/features/DoctorCard';
 import Button from '../../components/common/Button';
-import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import { isOutsideBookingWindow } from '../../utils/clinicDate';
+
+let razorpayCheckoutPromise;
+
+function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve();
+  if (razorpayCheckoutPromise) return razorpayCheckoutPromise;
+  razorpayCheckoutPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => {
+      razorpayCheckoutPromise = null;
+      reject(new Error('Razorpay Checkout failed to load'));
+    };
+    document.body.appendChild(script);
+  });
+  return razorpayCheckoutPromise;
+}
 
 export default function BookAppointment() {
   const navigate = useNavigate();
@@ -17,7 +35,7 @@ export default function BookAppointment() {
   const queryClient = useQueryClient();
 
   // Multi-step states
-  const [step, setStep] = useState(1); // 1: Specialist, 2: Date, 3: Time, 4: Reason
+  const [step, setStep] = useState(1); // 1: Specialist, 2: Date, 3: Time, 4: Review, 5: Payment
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTime, setSelectedTime] = useState('');
@@ -26,9 +44,11 @@ export default function BookAppointment() {
   const [handoffNotice, setHandoffNotice] = useState('');
   const [slotNotice, setSlotNotice] = useState('');
   const [confirmedAppointment, setConfirmedAppointment] = useState(null);
-  
-  // Confirmation modal state
-  const [modalOpen, setModalOpen] = useState(false);
+  const [paymentUiState, setPaymentUiState] = useState('not_started');
+  const [paymentNotice, setPaymentNotice] = useState('');
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [bookingResumeError, setBookingResumeError] = useState('');
+  const paymentAppointmentId = new URLSearchParams(location.search).get('paymentAppointmentId');
 
   // Fetch doctors
   const { 
@@ -66,6 +86,11 @@ export default function BookAppointment() {
       return response.data;
     },
   });
+  const paymentAppointmentQuery = useQuery({
+    queryKey: ['appointments', 'payment-resume', paymentAppointmentId],
+    enabled: Boolean(paymentAppointmentId),
+    queryFn: async () => (await api.get('/appointments')).data,
+  });
   const {
     data: bookingWindow,
     isLoading: loadingBookingWindow,
@@ -79,19 +104,127 @@ export default function BookAppointment() {
   // Mutation to book appointment
   const bookMutation = useMutation({
     mutationFn: async (appointmentData) => {
+      const readiness = (await api.get('/payments/readiness')).data;
+      if (!readiness.available) {
+        const unavailable = new Error('Razorpay Test Mode is not configured. No appointment was booked.');
+        unavailable.response = { data: { detail: unavailable.message } };
+        throw unavailable;
+      }
       const response = await api.post('/appointments', appointmentData);
-      return response.data;
+      return { appointment: response.data, currency: readiness.currency };
     },
-    onSuccess: (appointment) => {
+    onSuccess: ({ appointment, currency }) => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       queryClient.invalidateQueries({ queryKey: ['patientAppointments'] });
       queryClient.invalidateQueries({ queryKey: ['patientHistory'] });
       queryClient.invalidateQueries({ queryKey: ['appointmentAvailability', selectedDoctor?.id, selectedDateKey] });
-      setConfirmedAppointment(appointment);
-      setModalOpen(true);
+      setConfirmedAppointment({ ...appointment, billing_currency: appointment.billing_currency || currency });
+      setPaymentUiState('not_started');
+      setPaymentNotice('Your appointment is reserved. Payment is still pending until Razorpay verifies it.');
+      setStep(5);
+      navigate(`${location.pathname}?paymentAppointmentId=${appointment.id}`, { replace: true, state: null });
     },
     onError: () => {
       refetchAvailability();
+    },
+  });
+
+  const paymentStatusQuery = useQuery({
+    queryKey: ['appointmentPayment', confirmedAppointment?.id],
+    enabled: Boolean(confirmedAppointment?.id),
+    queryFn: async () => (await api.get(`/appointments/${confirmedAppointment.id}/payments`)).data,
+    refetchInterval: (query) => ['pending', 'abandoned', 'cancelled'].includes(query.state.data?.status) ? 5000 : false,
+  });
+
+  const verifyPaymentMutation = useMutation({
+    mutationFn: async (checkoutResponse) => (
+      await api.post(`/appointments/${confirmedAppointment.id}/payments/verify`, checkoutResponse)
+    ).data,
+    onSuccess: async (result) => {
+      setPaymentUiState(result.status);
+      setPaymentNotice(result.status === 'success'
+        ? 'Razorpay verified your payment. Your appointment is paid.'
+        : result.status === 'reconciliation_required'
+          ? 'A payment was captured while this appointment was cancelled. The booking remains cancelled and the clinic must reconcile the payment.'
+          : 'Payment is not yet confirmed. We will keep checking the provider status.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['appointments'] }),
+        queryClient.invalidateQueries({ queryKey: ['patientAppointments'] }),
+        queryClient.invalidateQueries({ queryKey: ['patientHistory'] }),
+        queryClient.invalidateQueries({ queryKey: ['appointmentPayment', confirmedAppointment?.id] }),
+      ]);
+    },
+    onError: () => {
+      setPaymentUiState('pending');
+      setPaymentNotice('We could not verify this checkout response. The appointment remains unpaid while we check with Razorpay. You can retry checkout.');
+    },
+  });
+
+  const abandonPaymentMutation = useMutation({
+    mutationFn: async () => (await api.post(`/appointments/${confirmedAppointment.id}/payments/abandon`)).data,
+    onSuccess: (result) => {
+      setPaymentUiState(result.status);
+      setPaymentNotice('Checkout was closed. No payment is confirmed; you can retry with the same appointment.');
+      queryClient.invalidateQueries({ queryKey: ['appointmentPayment', confirmedAppointment?.id] });
+    },
+    onError: () => {
+      setPaymentUiState('pending');
+      setPaymentNotice('Checkout was closed. Payment is not confirmed; refresh the status before retrying.');
+    },
+  });
+
+  const cancelPaymentMutation = useMutation({
+    mutationFn: async () => (await api.post(`/appointments/${confirmedAppointment.id}/payments/cancel`)).data,
+    onSuccess: (result) => {
+      setPaymentUiState(result.status);
+      setPaymentNotice('Checkout cancelled. Your appointment remains unpaid; you can retry later.');
+      queryClient.invalidateQueries({ queryKey: ['appointmentPayment', confirmedAppointment?.id] });
+    },
+  });
+
+  const paymentOrderMutation = useMutation({
+    mutationFn: async () => (await api.post(`/appointments/${confirmedAppointment.id}/payments/order`)).data,
+    onSuccess: async (order) => {
+      setPaymentUiState('pending');
+      setPaymentNotice('Razorpay Test Mode checkout is opening. Payment is not complete until the server verifies it.');
+      queryClient.invalidateQueries({ queryKey: ['appointmentPayment', confirmedAppointment?.id] });
+      try {
+        await loadRazorpayCheckout();
+        if (!window.Razorpay) throw new Error('Razorpay Checkout did not load');
+        const checkout = new window.Razorpay({
+          key: order.key_id,
+          amount: order.amount,
+          currency: order.currency,
+          order_id: order.order_id,
+          name: 'PhysioCare',
+          description: `Clinic appointment with ${confirmedAppointment.doctor_name}`,
+          handler: (checkoutResponse) => {
+            setCheckoutOpen(false);
+            verifyPaymentMutation.mutate(checkoutResponse);
+          },
+          modal: {
+            ondismiss: () => {
+              setCheckoutOpen(false);
+              abandonPaymentMutation.mutate();
+            },
+          },
+        });
+        checkout.on('payment.failed', () => {
+          setCheckoutOpen(false);
+          setPaymentUiState('failed');
+          setPaymentNotice('Razorpay reported a failed attempt. The appointment remains unpaid; retry checkout or check the status again.');
+          queryClient.invalidateQueries({ queryKey: ['appointmentPayment', confirmedAppointment?.id] });
+        });
+        setCheckoutOpen(true);
+        checkout.open();
+      } catch {
+        setPaymentUiState('pending');
+        setPaymentNotice('Razorpay Checkout could not be loaded. No payment was taken; retry when connected.');
+      }
+    },
+    onError: (error) => {
+      setPaymentUiState('pending');
+      setPaymentNotice(error.response?.data?.detail || 'Test Mode checkout is not available yet. Your appointment remains unpaid.');
     },
   });
 
@@ -137,6 +270,25 @@ export default function BookAppointment() {
     }
   }, [availability, selectedTime]);
 
+  useEffect(() => {
+    if (!paymentAppointmentId || !paymentAppointmentQuery.data) return;
+    const appointment = paymentAppointmentQuery.data.find((item) => item.id === paymentAppointmentId);
+    if (!appointment || appointment.service_mode !== 'clinic') {
+      setBookingResumeError('This clinic appointment could not be loaded for payment. Open its history record and try again.');
+      return;
+    }
+    setConfirmedAppointment(appointment);
+    setPaymentUiState(appointment.payment_status || 'not_started');
+    setPaymentNotice('Your existing appointment is loaded. Payment is complete only after server verification.');
+    setStep(5);
+  }, [paymentAppointmentId, paymentAppointmentQuery.data]);
+
+  useEffect(() => {
+    if (paymentAppointmentId && paymentAppointmentQuery.isError) {
+      setBookingResumeError('Payment details could not be loaded. Refresh your appointment history and try again.');
+    }
+  }, [paymentAppointmentId, paymentAppointmentQuery.isError]);
+
   const handleDateSelect = (date) => {
     if (date) {
       if (!selectedDate || date.toDateString() !== selectedDate.toDateString()) {
@@ -166,8 +318,12 @@ export default function BookAppointment() {
     setHandoffNotice('');
     setSlotNotice('');
     setConfirmedAppointment(null);
+    setPaymentUiState('not_started');
+    setPaymentNotice('');
     setStep(1);
     bookMutation.reset();
+    paymentOrderMutation.reset();
+    verifyPaymentMutation.reset();
   };
 
   const handleSubmit = (e) => {
@@ -182,10 +338,12 @@ export default function BookAppointment() {
     });
   };
 
-  const handleModalClose = () => {
-    setModalOpen(false);
+  const handlePaymentComplete = () => {
     navigate('/patient/dashboard');
   };
+
+  const paymentNeedsReconciliation = paymentStatusQuery.data?.status === 'reconciliation_required'
+    || paymentUiState === 'reconciliation_required';
 
   if (doctorsError || bookingWindowError) {
     return (
@@ -204,7 +362,8 @@ export default function BookAppointment() {
     { number: 1, label: 'Specialist', available: true },
     { number: 2, label: 'Date', available: Boolean(selectedDoctor) },
     { number: 3, label: 'Time', available: Boolean(selectedDate) },
-    { number: 4, label: 'Details', available: Boolean(selectedTime) },
+    { number: 4, label: 'Review', available: Boolean(selectedTime) },
+    { number: 5, label: 'Payment', available: Boolean(confirmedAppointment) },
   ];
   const appointmentSlots = availability?.slots || [];
   const availableSlotCount = appointmentSlots.filter((slot) => slot.available).length;
@@ -213,15 +372,16 @@ export default function BookAppointment() {
   const disabledDays = (date) => isOutsideBookingWindow(date, bookingWindow);
 
   return (
-    <div className="patient-page patient-booking patient-booking--focused flex flex-col gap-stack-lg max-w-5xl mx-auto animate-fade-in pb-16">
+    <div className={`patient-page patient-booking patient-booking--focused flex flex-col gap-stack-lg max-w-5xl mx-auto animate-fade-in pb-16${step === 5 ? ' patient-booking--payment' : ''}`}>
       
       {/* Stepper Progress bar */}
+      {step !== 5 && (
       <ol className="patient-booking__stepper" aria-label="Booking progress" data-patient-reveal>
         {progressSteps.map((progressStep) => (
           <li key={progressStep.number} className={step >= progressStep.number ? 'is-complete' : ''}>
             <button
               type="button"
-              disabled={!progressStep.available || bookMutation.isPending}
+              disabled={!progressStep.available || bookMutation.isPending || (Boolean(confirmedAppointment) && progressStep.number !== 5)}
               aria-current={step === progressStep.number ? 'step' : undefined}
               onClick={() => setStep(progressStep.number)}
             >
@@ -231,19 +391,22 @@ export default function BookAppointment() {
           </li>
         ))}
       </ol>
+      )}
 
+      {step !== 5 && (
       <div className="patient-page__header patient-booking__header" data-patient-reveal>
         <div className="patient-page__header-copy">
           <p className="patient-page__eyebrow">Clinic appointment</p>
           <h1 className="patient-page__title">Book an appointment</h1>
-          <p className="patient-page__description">Choose your specialist, date, and an available IST time. Review everything before you confirm.</p>
+          <p className="patient-page__description">Choose your specialist, date, and an available IST time, then review and pay securely in Test Mode.</p>
           <ul className="patient-booking__assurances" aria-label="Booking information">
             <li><span className="material-symbols-outlined" aria-hidden="true">schedule</span>India Standard Time</li>
-            <li><span className="material-symbols-outlined" aria-hidden="true">payments</span>No payment taken</li>
+            <li><span className="material-symbols-outlined" aria-hidden="true">payments</span>Razorpay Test Mode</li>
             <li><span className="material-symbols-outlined" aria-hidden="true">edit_note</span>Edit before confirming</li>
           </ul>
         </div>
       </div>
+      )}
 
       {handoffNotice && (
         <div className="patient-booking__handoff" role="status" aria-live="polite">
@@ -252,16 +415,19 @@ export default function BookAppointment() {
         </div>
       )}
 
-      <div className={`patient-booking__toolbar${step === 1 ? ' is-initial' : ''}`} aria-label="Booking draft actions">
-        <button type="button" onClick={() => setStep(Math.max(1, step - 1))} disabled={step === 1 || bookMutation.isPending}>
+      {bookingResumeError && <div className="patient-booking__submit-error" role="alert">{bookingResumeError}</div>}
+
+      {step !== 5 && <div className={`patient-booking__toolbar${step === 1 ? ' is-initial' : ''}`} aria-label="Booking draft actions">
+        <button type="button" onClick={() => setStep(Math.max(1, step - 1))} disabled={step === 1 || bookMutation.isPending || Boolean(confirmedAppointment)}>
           <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
           Back
         </button>
-        <button type="button" onClick={handleStartOver} disabled={step === 1 || bookMutation.isPending}>
+        <button type="button" onClick={handleStartOver} disabled={step === 1 || bookMutation.isPending || Boolean(confirmedAppointment)}>
           Clear draft
         </button>
-      </div>
+      </div>}
 
+      {step !== 5 && (
       <div className="patient-booking__workspace">
         <div className="patient-booking__flow">
 
@@ -436,8 +602,8 @@ export default function BookAppointment() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-stack-md" data-patient-reveal aria-busy={bookMutation.isPending}>
           <div className="patient-booking__section-heading">
             <div>
-              <p>Step 4 of 4</p>
-              <h2 className="patient-booking__section-title">Add visit details</h2>
+              <p>Step 4 of 5</p>
+              <h2 className="patient-booking__section-title">Review appointment</h2>
             </div>
             <span>Review your selection, then confirm.</span>
           </div>
@@ -479,7 +645,7 @@ export default function BookAppointment() {
             className="w-full mt-4 py-4"
             disabled={bookMutation.isPending}
           >
-            {bookMutation.isPending ? 'Confirming booking…' : 'Confirm booking'}
+            {bookMutation.isPending ? 'Reserving appointment…' : 'Reserve appointment & continue to payment'}
           </Button>
         </form>
       )}
@@ -514,47 +680,73 @@ export default function BookAppointment() {
           </dl>
           <p className="patient-booking__summary-note">
             <span className="material-symbols-outlined" aria-hidden="true">lock</span>
-            Times use India Standard Time. Nothing is sent until you select “Confirm booking.”
+            Times use India Standard Time. Your appointment is created when you continue to payment; payment remains pending until server verification.
           </p>
         </aside>
       </div>
+      )}
 
-      {/* Booking confirmation Success Modal */}
-      <Modal
-        isOpen={modalOpen}
-        onClose={handleModalClose}
-        title="Booking Confirmed!"
-        panelClassName="patient-booking-confirmation"
-      >
-        <div className="text-center space-y-4">
-          <div className="patient-booking-success__icon w-16 h-16 rounded-full bg-primary-container/20 text-primary flex items-center justify-center mx-auto" aria-hidden="true">
-            <span className="material-symbols-outlined" style={{ fontSize: '32px', fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-          </div>
-          <div>
-            <h4 className="patient-booking-confirmation__message font-bold text-lg text-on-surface">Your clinic appointment is scheduled.</h4>
-            <p className="patient-booking-confirmation__description text-sm text-on-surface-variant mt-1">It now appears in your upcoming appointments. No payment was taken in this app.</p>
-          </div>
-          
-          <div className="patient-booking-confirmation__details bg-surface-container-low rounded-xl p-4 text-left text-sm space-y-2 border border-surface-container">
-            <div className="flex justify-between">
-              <span className="font-semibold text-on-surface-variant">Specialist:</span>
-              <span className="font-bold text-on-surface">{confirmedAppointment?.doctor_name || selectedDoctor?.full_name}</span>
+      {step === 5 && confirmedAppointment && (
+        <section className="patient-booking__payment" aria-labelledby="booking-payment-heading" data-patient-reveal>
+          <div className="patient-booking__section-heading">
+            <div>
+              <p>Step 5 of 5 · Razorpay Test Mode</p>
+              <h2 id="booking-payment-heading" className="patient-booking__section-title">
+                {paymentNeedsReconciliation ? 'Payment needs clinic review' : paymentStatusQuery.data?.status === 'success' || paymentUiState === 'success' ? 'Payment verified' : 'Complete payment'}
+              </h2>
             </div>
-            <div className="flex justify-between">
-              <span className="font-semibold text-on-surface-variant">Date:</span>
-              <span className="font-bold text-on-surface">{confirmedAppointment?.appointment_date ? format(parseISO(confirmedAppointment.appointment_date), 'MMMM dd, yyyy') : selectedDate && format(selectedDate, 'MMMM dd, yyyy')}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold text-on-surface-variant">Time:</span>
-              <span className="font-bold text-on-surface">{confirmedAppointment?.time_slot || selectedTime} IST</span>
-            </div>
+            <span>Payment is confirmed only after server verification.</span>
           </div>
 
-          <Button variant="patientPrimary" onClick={handleModalClose} className="patient-booking-confirmation__done w-full">
-            View upcoming appointment
-          </Button>
-        </div>
-      </Modal>
+          <dl className="patient-booking__payment-details">
+            <div><dt>Clinician</dt><dd>{confirmedAppointment.doctor_name || selectedDoctor?.full_name}</dd></div>
+            <div><dt>Date and time</dt><dd>{format(parseISO(confirmedAppointment.appointment_date), 'EEE, MMM d, yyyy')} · {confirmedAppointment.time_slot} IST</dd></div>
+            <div><dt>Service</dt><dd>{confirmedAppointment.service_mode === 'home_visit' ? 'Home visit' : 'Clinic appointment'}</dd></div>
+            <div><dt>Appointment amount</dt><dd>{paymentStatusQuery.data?.currency || confirmedAppointment.billing_currency ? `INR ${Number(confirmedAppointment.billing_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${Number(confirmedAppointment.billing_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} - currency not configured`}</dd></div>
+          </dl>
+
+          {paymentNotice && (
+            <div className={`patient-booking__payment-notice${paymentUiState === 'failed' || paymentNeedsReconciliation ? ' is-error' : ''}`} role={paymentUiState === 'failed' || paymentNeedsReconciliation ? 'alert' : 'status'} aria-live="polite">
+              {paymentStatusQuery.data?.status === 'success' ? 'Razorpay payment verified by the server.' : paymentNotice}
+            </div>
+          )}
+
+          {paymentNeedsReconciliation ? (
+            <div className="patient-booking__payment-confirmed" role="alert">
+              <span className="material-symbols-outlined" aria-hidden="true">support_agent</span>
+              <div><strong>Appointment remains cancelled</strong><span>The provider confirmed a capture. The clinic needs to reconcile it; do not start another checkout.</span></div>
+              <Button variant="patientPrimary" onClick={handlePaymentComplete}>View appointment status</Button>
+            </div>
+          ) : paymentStatusQuery.data?.status === 'success' || paymentUiState === 'success' ? (
+            <div className="patient-booking__payment-confirmed" role="status">
+              <span className="material-symbols-outlined" aria-hidden="true">verified</span>
+              <div><strong>Payment successful</strong><span>Your appointment and payment status are confirmed.</span></div>
+              <Button variant="patientPrimary" onClick={handlePaymentComplete}>View appointment</Button>
+            </div>
+          ) : (
+            <>
+              {paymentStatusQuery.data?.status === 'failed' && <p className="patient-booking__payment-state">The provider reports the last attempt failed. The appointment is still unpaid.</p>}
+              {paymentStatusQuery.data?.status === 'abandoned' && <p className="patient-booking__payment-state">Checkout was closed before payment was confirmed.</p>}
+              {paymentStatusQuery.data?.status === 'cancelled' && <p className="patient-booking__payment-state">Checkout was cancelled. The appointment is still unpaid.</p>}
+              {paymentStatusQuery.isError && <p className="patient-booking__payment-state" role="alert">Payment status could not be refreshed. Check again before starting another checkout.</p>}
+              <Button
+                variant="patientPrimary"
+                type="button"
+                disabled={paymentOrderMutation.isPending || verifyPaymentMutation.isPending || checkoutOpen || paymentStatusQuery.isError || cancelPaymentMutation.isPending}
+                onClick={() => paymentOrderMutation.mutate()}
+              >
+                {paymentOrderMutation.isPending ? 'Preparing secure checkout…' : verifyPaymentMutation.isPending ? 'Verifying payment…' : paymentStatusQuery.data?.status === 'failed' || paymentUiState === 'failed' || paymentUiState === 'abandoned' ? 'Retry Test Mode payment' : 'Pay securely with Razorpay'}
+              </Button>
+              {paymentStatusQuery.data?.status !== 'not_started' && (
+                <button type="button" className="patient-booking__cancel-payment" onClick={() => cancelPaymentMutation.mutate()} disabled={cancelPaymentMutation.isPending || paymentOrderMutation.isPending || checkoutOpen}>
+                  {cancelPaymentMutation.isPending ? 'Cancelling checkout…' : 'Cancel payment step'}
+                </button>
+              )}
+              <p className="patient-booking__payment-disclaimer">Test Mode only. PhysioCare never receives or stores card numbers, CVVs, UPI PINs, or bank credentials.</p>
+            </>
+          )}
+        </section>
+      )}
 
     </div>
   );

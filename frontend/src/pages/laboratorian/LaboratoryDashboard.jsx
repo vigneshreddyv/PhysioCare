@@ -6,11 +6,15 @@ import ErrorState from '../../components/common/ErrorState';
 import Skeleton from '../../components/common/Skeleton';
 
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
+const requestStatusLabels = {
+  approved_for_coordination: 'Approved for coordination',
+};
 
 export default function LaboratoryDashboard() {
   const queryClient = useQueryClient();
   const fileInputs = useRef({});
   const [selectedFiles, setSelectedFiles] = useState({});
+  const [uploadSuccess, setUploadSuccess] = useState({});
 
   const orders = useQuery({
     queryKey: ['laboratorianOrders'],
@@ -28,6 +32,7 @@ export default function LaboratoryDashboard() {
     ).data,
     onSuccess: (_data, variables) => {
       setSelectedFiles((current) => ({ ...current, [variables.requestId]: null }));
+      setUploadSuccess((current) => ({ ...current, [variables.requestId]: true }));
       if (fileInputs.current[variables.requestId]) fileInputs.current[variables.requestId].value = '';
       queryClient.invalidateQueries({ queryKey: ['laboratorianOrders'] });
     },
@@ -35,8 +40,10 @@ export default function LaboratoryDashboard() {
 
   const chooseFile = (requestId, file) => {
     if (!file) return;
+    setUploadSuccess((current) => ({ ...current, [requestId]: false }));
+    upload.reset();
     if (file.type !== 'application/pdf' || file.size > MAX_REPORT_BYTES) {
-      setSelectedFiles((current) => ({ ...current, [requestId]: { error: 'Choose a PDF up to 5 MB.' } }));
+      setSelectedFiles((current) => ({ ...current, [requestId]: { file: null, error: 'Choose a PDF up to 5 MB.' } }));
       return;
     }
     setSelectedFiles((current) => ({ ...current, [requestId]: { file } }));
@@ -73,10 +80,12 @@ export default function LaboratoryDashboard() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-primary">{{ awaiting_publication: 'Awaiting publication', released: 'Published', draft_uploaded: 'Legacy draft uploaded' }[order.report_status] || 'Report not started'}</p>
                     <h3 className="font-semibold">{order.patient_name}</h3>
                     <p className="text-sm text-on-surface-variant">{order.patient_phone || 'No phone provided'} · {order.mode.replaceAll('_', ' ')}</p>
+                    <p className="text-sm text-on-surface-variant">Request status: {requestStatusLabels[order.status] || order.status.replaceAll('_', ' ')}</p>
                   </div>
                   <div className="portal-mobile-record__row"><span>Tests</span><strong>{order.selected_tests.join(', ')}</strong></div>
                   {order.home_address && <div className="portal-mobile-record__row"><span>Collection address</span><strong>{order.home_address}, {order.city}</strong></div>}
                   {order.report_file_name && <div className="portal-mobile-record__row"><span>Finalized report</span><strong>{order.report_file_name}</strong></div>}
+                  {uploadSuccess[order.id] && <p className="text-sm font-semibold text-primary" role="status">Report uploaded and awaiting administrator publication.</p>}
                   {order.report_status === 'released' ? <p className="text-sm text-on-surface-variant">This report has been published and can no longer be replaced.</p> : <label className="grid gap-2 font-semibold">
                     Finalized report PDF
                     <input

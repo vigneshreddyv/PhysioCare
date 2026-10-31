@@ -1,0 +1,8 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: physiocare-lab-demo-mongodb
+    command: ["mongod", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27018:27017"
+    restart: "no"

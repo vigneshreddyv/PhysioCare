@@ -14,6 +14,7 @@ from app.core.appointment_time import (
 )
 from app.core.config import settings
 from app.models.appointment import Appointment
+from app.models.payment_attempt import PaymentAttempt
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
@@ -118,6 +119,7 @@ class AppointmentService:
             starts_at=starts_at,
             slot_claim=active_slot_claim(str(doctor.id), starts_at),
             clinic_timezone=settings.CLINIC_TIMEZONE,
+            billing_currency=settings.APPOINTMENT_BILLING_CURRENCY.strip().upper() or None,
             time_slot=schema.time_slot,
             reason=reason if reason is not None else schema.reason,
         )
@@ -285,6 +287,47 @@ class AppointmentService:
                 detail="Operation not permitted for this role",
             )
 
+        if schema.billing_status == "paid" and appointment.billing_status != "paid":
+            verified_payment = await PaymentAttempt.find_one(
+                {"appointment_id": appointment.id, "status": "success"}
+            )
+            if not verified_payment:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Appointment payments can be marked paid only after provider verification",
+                )
+        if schema.billing_amount is not None and schema.billing_amount != appointment.billing_amount:
+            existing_payment = await PaymentAttempt.find_one({"appointment_id": appointment.id})
+            if existing_payment:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="The amount cannot change after payment setup has started",
+                )
+
+        if schema.status == "cancelled":
+            if schema.billing_status is not None or schema.billing_amount is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cancel the appointment separately from billing changes",
+                )
+            if appointment.status == "cancelled":
+                await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+                return await AppointmentService._format_appointment(appointment)
+            cancelled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            changed = await AppointmentRepository.cancel_from_status(
+                appointment_id, appointment.status, cancelled_at
+            )
+            updated = await AppointmentRepository.get_by_id(appointment_id)
+            if changed and updated and updated.status == "cancelled":
+                await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+                return await AppointmentService._format_appointment(updated)
+            if not updated:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The appointment changed before cancellation could be completed.",
+            )
+
         if schema.status is not None:
             if schema.status in {"scheduled", "in_progress"}:
                 try:
@@ -351,6 +394,7 @@ class AppointmentService:
                 detail="You may cancel only your own appointments",
             )
         if appointment.status == "cancelled":
+            await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
             return await AppointmentService._format_appointment(appointment)
         if appointment.status != "scheduled":
             raise HTTPException(
@@ -387,6 +431,7 @@ class AppointmentService:
         )
         updated = await AppointmentRepository.get_by_id(appointment_id)
         if changed or (updated and updated.status == "cancelled"):
+            await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
             return await AppointmentService._format_appointment(updated)
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
@@ -404,6 +449,7 @@ class AppointmentService:
         if not appointment:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
         if appointment.status == "cancelled":
+            await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
             return await AppointmentService._format_reception_appointment(appointment)
         if appointment.status != "scheduled":
             raise HTTPException(
@@ -436,6 +482,7 @@ class AppointmentService:
         )
         updated = await AppointmentRepository.get_by_id(appointment_id)
         if changed or (updated and updated.status == "cancelled"):
+            await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
             return await AppointmentService._format_reception_appointment(updated)
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
@@ -443,6 +490,26 @@ class AppointmentService:
             status_code=status.HTTP_409_CONFLICT,
             detail="This appointment is no longer available for reception cancellation.",
         )
+
+    @staticmethod
+    async def _mark_cancelled_capture_for_reconciliation(appointment: Appointment) -> None:
+        """Carry a previously verified provider capture onto the cancelled booking."""
+        if (
+            not appointment
+            or appointment.status != "cancelled"
+            or not getattr(appointment, "payment_order_id", None)
+        ):
+            return
+        attempt = await PaymentAttempt.find_one(
+            {"appointment_id": appointment.id, "status": "success"}
+        )
+        if attempt and attempt.provider_order_id and attempt.provider_payment_id:
+            await AppointmentRepository.mark_cancelled_capture_for_reconciliation(
+                str(appointment.id),
+                attempt.provider_order_id,
+                attempt.provider_payment_id,
+                attempt.currency,
+            )
 
     @staticmethod
     def _status_cancellation_message(appointment_status: str) -> str:
@@ -521,6 +588,10 @@ class AppointmentService:
             status=a.status,
             billing_status=a.billing_status,
             billing_amount=a.billing_amount,
+            billing_currency=getattr(a, "billing_currency", None),
+            payment_status=getattr(a, "payment_status", "not_started"),
+            payment_order_id=getattr(a, "payment_order_id", None),
+            payment_id=getattr(a, "payment_id", None),
             cancelled_at=a.cancelled_at,
             can_patient_cancel=can_patient_cancel,
             cancellation_deadline=cancellation_deadline,

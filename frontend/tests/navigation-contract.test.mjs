@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { validatePatientProfile } from '../src/utils/patientProfileValidation.js';
 
 
 const source = async (relativePath) => readFile(new URL(`../${relativePath}`, import.meta.url), 'utf8');
@@ -18,6 +19,39 @@ test('admin activity links to the registered authenticated notifications route',
 });
 
 
+test('notifications page uses real backend endpoints and provides unread management', async () => {
+  const [appSource, commonNotifSource, navbarSource] = await Promise.all([
+    source('src/App.jsx'),
+    source('src/pages/common/Notifications.jsx'),
+    source('src/components/common/Navbar.jsx'),
+  ]);
+
+  assert.match(appSource, /const Notifications = lazy\(\(\) => import\('\.\/pages\/common\/Notifications'\)\)/);
+  assert.match(appSource, /path="\/notifications"/);
+  assert.match(commonNotifSource, /api\.get\('\/notifications'\)/);
+  assert.match(commonNotifSource, /api\.get\('\/notifications\/unread-count'\)/);
+  assert.match(commonNotifSource, /api\.patch\(`\/notifications\/\$\{notificationId\}\/read`\)/);
+  assert.match(commonNotifSource, /api\.patch\('\/notifications\/read-all'\)/);
+  assert.match(commonNotifSource, /<Skeleton/);
+  assert.match(commonNotifSource, /<EmptyState/);
+  assert.match(commonNotifSource, /<ErrorState/);
+  assert.match(commonNotifSource, /unreadCount/);
+  assert.match(commonNotifSource, /Mark all as read/);
+  assert.match(commonNotifSource, /Mark read/);
+  assert.doesNotMatch(commonNotifSource, /Welcome to PhysioCare/);
+  assert.doesNotMatch(commonNotifSource, /New Feature Released/);
+  assert.match(navbarSource, /api\.get\('\/notifications\/unread-count'\)/);
+  assert.match(navbarSource, /unreadCount > 0/);
+});
+
+test('admin appointment list uses a truthful recent-record heading', async () => {
+  const recentAppointmentsSource = await source('src/pages/admin/dashboard/RecentAppointments.jsx');
+
+  assert.match(recentAppointmentsSource, /Recent Appointments/);
+  assert.doesNotMatch(recentAppointmentsSource, /Today's Appointments/);
+});
+
+
 test('patient history placeholder returns to the registered patient directory', async () => {
   const [appSource, historySource] = await Promise.all([
     source('src/App.jsx'),
@@ -27,6 +61,25 @@ test('patient history placeholder returns to the registered patient directory', 
   assert.match(appSource, /<Route path="patients" element={<PatientsList \/>} \/>/);
   assert.match(historySource, /navigate\('\/admin\/patients'\)/);
   assert.doesNotMatch(historySource, /\/admin\/patients\/\$\{/);
+});
+
+test('laboratory request management has a dedicated Admin-only route and navigation entry', async () => {
+  const [appSource, sidebarSource, pageSource, demoServicesSource] = await Promise.all([
+    source('src/App.jsx'),
+    source('src/components/common/Sidebar.jsx'),
+    source('src/pages/admin/AdminLaboratoryRequests.jsx'),
+    source('src/pages/admin/DemoServices.jsx'),
+  ]);
+
+  assert.match(appSource, /path="laboratory" element={<AdminLaboratoryRequests \/>}/);
+  assert.match(
+    appSource,
+    /<RoleProtectedRoute allowedRoles=\{\['admin'\]\}>[\s\S]*?<Route path="laboratory" element={<AdminLaboratoryRequests \/>}/,
+  );
+  assert.match(sidebarSource, /\{ path: '\/admin\/laboratory', label: 'Laboratory Requests', icon: 'biotech' \}/);
+  assert.match(pageSource, /<AdminLabRequestsPanel \/>/);
+  assert.match(appSource, /path="demo-services" element={<DemoServices \/>}/);
+  assert.doesNotMatch(demoServicesSource, /AdminLabRequestsPanel/);
 });
 
 
@@ -87,6 +140,20 @@ test('patient profile edit is limited to own name phone and recorded gender', as
   assert.match(profileSource, /Gender is optional and patient-recorded/);
   assert.match(profileSource, /Email, date of birth, role, and care status remain read-only/);
   assert.match(authSource, /refreshUserProfile: fetchUserProfile/);
+  assert.match(profileSource, /Loading your profile/);
+  assert.match(profileSource, /Profile not found/);
+  assert.match(profileSource, /Your profile changes have been saved/);
+  assert.match(profileSource, /api\.patch\('\/users\/me\/patient-profile'/);
+});
+
+
+test('patient profile validation follows supported backend field limits', () => {
+  assert.deepEqual(validatePatientProfile({ full_name: 'A', phone: '', gender: '' }), {
+    full_name: 'Enter a name with at least 2 characters.',
+  });
+  assert.deepEqual(validatePatientProfile({ full_name: ' Alex Patient ', phone: '+91 98765 43210', gender: 'Woman' }), {});
+  assert.equal(validatePatientProfile({ full_name: 'Alex Patient', phone: '12345', gender: '' }).phone, 'Enter between 7 and 15 digits.');
+  assert.equal(validatePatientProfile({ full_name: 'Alex Patient', phone: '9876543210', gender: 'x'.repeat(81) }).gender, 'Gender must be 80 characters or fewer.');
 });
 
 
@@ -120,6 +187,36 @@ test('patient booking uses server availability and refreshes occupied slots', as
 });
 
 
+test('patient history cancellation dialog keeps readable contrast and accessible actions', async () => {
+  const [historySource, modalSource, cssSource] = await Promise.all([
+    source('src/pages/patient/PatientHistory.jsx'),
+    source('src/components/common/Modal.jsx'),
+    source('src/index.css'),
+  ]);
+
+  const foreground = '#153f48';
+  const background = '#ffffff';
+  const luminance = (hex) => {
+    const channels = hex.match(/[a-f0-9]{2}/gi).map((channel) => parseInt(channel, 16) / 255);
+    const linear = channels.map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4));
+    return (0.2126 * linear[0]) + (0.7152 * linear[1]) + (0.0722 * linear[2]);
+  };
+  const ratio = (luminance(background) + 0.05) / (luminance(foreground) + 0.05);
+
+  assert.ok(ratio >= 4.5, `Expected WCAG AA normal-text contrast, received ${ratio.toFixed(2)}:1`);
+  assert.match(historySource, /panelClassName="patient-history-cancel-modal"/);
+  assert.match(historySource, /variant="outline"[^>]*>[\s\S]*?Keep appointment/);
+  assert.match(historySource, /variant="danger"[^>]*>[\s\S]*?Confirm cancellation/);
+  assert.match(historySource, /role="alert" className="patient-history__cancel-error"/);
+  assert.match(modalSource, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby=\{titleId\}/);
+  assert.match(modalSource, /event\.key === 'Escape'/);
+  assert.match(modalSource, /event\.shiftKey && document\.activeElement === firstControl/);
+  assert.match(cssSource, /\.patient-history-cancel-modal\s*\{[^}]*background-color:\s*#ffffff\s*!important;[^}]*color:\s*#153f48;/);
+  assert.match(cssSource, /\.patient-history-cancel-modal > div:first-child h3\s*\{[^}]*color:\s*#153f48;/);
+  assert.match(cssSource, /\.patient-history-cancel-modal \.patient-history__cancel-dialog > p\s*\{[^}]*color:\s*#153f48;/);
+});
+
+
 test('doctor patient directory renders assigned minimum fields without admin actions', async () => {
   const patientsSource = await source('src/pages/admin/PatientsList.jsx');
 
@@ -130,6 +227,65 @@ test('doctor patient directory renders assigned minimum fields without admin act
   assert.match(patientsSource, /!isReceptionist && <th className="p-4">Date of Birth<\/th>/);
   assert.match(patientsSource, /isAdmin && <th className="p-4">Subscription<\/th>/);
   assert.match(patientsSource, /isAdmin && <div className="portal-mobile-record__actions">/);
+});
+
+test('care management is routed for admin and doctor patient records only', async () => {
+  const [appSource, sidebarSource, patientsSource, carePlanSource, exerciseSource] = await Promise.all([
+    source('src/App.jsx'),
+    source('src/components/common/Sidebar.jsx'),
+    source('src/pages/admin/PatientsList.jsx'),
+    source('src/pages/admin/CarePlanManagement.jsx'),
+    source('src/pages/admin/ExerciseAssignmentManagement.jsx'),
+  ]);
+
+  assert.match(appSource, /const CarePlanManagement = lazy\(\(\) => import\('\.\/pages\/admin\/CarePlanManagement'\)\)/);
+  assert.match(appSource, /const ExerciseAssignmentManagement = lazy\(\(\) => import\('\.\/pages\/admin\/ExerciseAssignmentManagement'\)\)/);
+  assert.match(appSource, /path="patients\/:patientId\/care-plan" element={<CarePlanManagement \/>}/g);
+  assert.match(appSource, /path="patients\/:patientId\/exercises" element={<ExerciseAssignmentManagement \/>}/g);
+  assert.match(appSource, /path="care-management" element={<PatientsList \/>}/g);
+  assert.match(sidebarSource, /admin:[\s\S]*?\{ path: '\/admin\/care-management', label: 'Care management', icon: 'clinical_notes' \}/);
+  assert.match(sidebarSource, /doctor:[\s\S]*?\{ path: '\/doctor\/care-management', label: 'Care management', icon: 'clinical_notes' \}/);
+  assert.doesNotMatch(sidebarSource.match(/patient: \[[\s\S]*?\n    \]/)?.[0] || '', /care management/i);
+  assert.doesNotMatch(sidebarSource.match(/laboratorian: \[[\s\S]*?\n    \]/)?.[0] || '', /care management/i);
+  assert.match(patientsSource, /navigate\(`\/(?:admin|doctor)\/patients\/\$\{patient\.id\}\/(?:care-plan|exercises)`\)/);
+  assert.match(carePlanSource, /api\.get\(`\/care-plans\/patient\/\$\{patientId\}`\)/);
+  assert.match(exerciseSource, /api\.get\(`\/exercise-assignments\?patient_id=\$\{patientId\}`\)/);
+  assert.match(
+    appSource,
+    /<RoleProtectedRoute allowedRoles=\{\['doctor'\]\}>[\s\S]*?path="patients\/:patientId\/care-plan" element={<CarePlanManagement \/>}/,
+  );
+  assert.match(
+    appSource,
+    /<RoleProtectedRoute allowedRoles=\{\['admin'\]\}>[\s\S]*?path="patients\/:patientId\/care-plan" element={<CarePlanManagement \/>}/,
+  );
+  assert.doesNotMatch(appSource.match(/path="\/reception"[\s\S]*?<\/Route>/)?.[0] || '', /care-plan|exercises/);
+  assert.doesNotMatch(appSource.match(/path="\/laboratory"[\s\S]*?<\/Route>/)?.[0] || '', /care-plan|exercises/);
+  assert.doesNotMatch(carePlanSource, /from 'lucide-react'/);
+  assert.doesNotMatch(exerciseSource, /from 'lucide-react'/);
+});
+
+test('general clinical report authoring is role-scoped and uses the report contract', async () => {
+  const [appSource, sidebarSource, authoringSource, patientSource] = await Promise.all([
+    source('src/App.jsx'),
+    source('src/components/common/Sidebar.jsx'),
+    source('src/pages/admin/ReportAuthoring.jsx'),
+    source('src/pages/patient/PatientReports.jsx'),
+  ]);
+
+  assert.match(appSource, /const ReportAuthoring = lazy\(\(\) => import\('\.\/pages\/admin\/ReportAuthoring'\)\)/);
+  assert.match(appSource, /path="reports\/new" element={<ReportAuthoring \/>}/g);
+  assert.match(sidebarSource, /admin:[\s\S]*?\{ path: '\/admin\/reports\/new', label: 'Clinical reports', icon: 'description' \}/);
+  assert.match(sidebarSource, /doctor:[\s\S]*?\{ path: '\/doctor\/reports\/new', label: 'Clinical reports', icon: 'description' \}/);
+  assert.doesNotMatch(sidebarSource.match(/patient: \[[\s\S]*?\n    \]/)?.[0] || '', /clinical reports/i);
+  assert.doesNotMatch(sidebarSource.match(/laboratorian: \[[\s\S]*?\n    \]/)?.[0] || '', /clinical reports/i);
+  assert.match(authoringSource, /api\.get\('\/users\/patients'\)/);
+  assert.match(authoringSource, /body\.append\('report_data_str', JSON\.stringify\(payload\)\)/);
+  assert.match(authoringSource, /api\.post\('\/reports', body/);
+  assert.match(authoringSource, /Symptoms/);
+  assert.match(authoringSource, /Findings/);
+  assert.match(authoringSource, /Recommendations/);
+  assert.match(patientSource, /api\.get\('\/reports'\)/);
+  assert.match(patientSource, /api\.get\(`\/reports\/\$\{report\.id\}\/download`/);
 });
 
 
@@ -207,20 +363,35 @@ test('public clinician choice survives authentication without persistent or sens
 });
 
 
-test('phase one confirmations state outcome, timezone, and next action', async () => {
+test('appointment completion requires verified payment and offers a dashboard handoff', async () => {
   const [bookingSource, dashboardSource, homeVisitSource] = await Promise.all([
     source('src/pages/patient/BookAppointment.jsx'),
     source('src/pages/patient/PatientDashboard.jsx'),
     source('src/pages/patient/HomeVisitRequests.jsx'),
   ]);
 
-  assert.match(bookingSource, /Your clinic appointment is scheduled/);
-  assert.match(bookingSource, /No payment was taken in this app/);
-  assert.match(bookingSource, /View upcoming appointment/);
+  assert.match(bookingSource, /Payment is confirmed only after server verification/);
+  assert.match(bookingSource, /Payment successful/);
+  assert.match(bookingSource, /View appointment/);
   assert.match(bookingSource, /\} IST/);
   assert.match(dashboardSource, /time_slot\} IST with Dr/);
   assert.match(homeVisitSource, /Home visit confirmed for/);
   assert.match(homeVisitSource, /Earlier home-visit requests/);
+});
+
+
+test('payment step removes the draft summary and stays compact while using persisted appointment time', async () => {
+  const [bookingSource, cssSource] = await Promise.all([
+    source('src/pages/patient/BookAppointment.jsx'),
+    source('src/index.css'),
+  ]);
+
+  assert.match(bookingSource, /step !== 5 && \(\s*<ol className="patient-booking__stepper"/);
+  assert.match(bookingSource, /step !== 5 && \(\s*<div className="patient-booking__workspace">/);
+  assert.match(bookingSource, /patient-booking--payment/);
+  assert.match(bookingSource, /confirmedAppointment\.appointment_date[\s\S]*confirmedAppointment\.time_slot/);
+  assert.match(cssSource, /\.patient-booking--payment\s*\{\s*margin-top:\s*-18px;/);
+  assert.match(cssSource, /@media \(max-width: 767px\)\s*\{\s*\.patient-booking--payment\s*\{\s*margin-top:\s*-8px;/);
 });
 
 
@@ -362,11 +533,25 @@ test('home visits use explicit slot confirmation while legacy requests stay sepa
   assert.match(patientSource, /api\.get\('\/home-visit-bookings\/availability'/);
   assert.match(patientSource, /api\.post\('\/home-visit-bookings'/);
   assert.match(patientSource, /Confirm home visit/);
+  assert.match(patientSource, /Home-visit appointments/);
+  assert.match(patientSource, /booking\.status\.replaceAll/);
+  assert.match(patientSource, /patient-home-visit-card__payment/);
   assert.match(patientSource, /Earlier home-visit requests/);
   assert.match(patientSource, /submission_key/);
   assert.match(patientSource, /No preference — clinic assigns/);
-  assert.match(patientSource, /Doctor assignment pending/);
-  assert.doesNotMatch(patientSource, /Payments are not configured|server rejects|configuration/i);
+  assert.match(patientSource, /Clinician assignment pending/);
+  assert.match(patientSource, /entitlement\.isLoading/);
+  assert.match(patientSource, /requests_enabled/);
+  assert.match(patientSource, /Check access again/);
+  assert.match(patientSource, /No home-visit times are listed for this date/);
+  assert.match(patientSource, /<dt>Visit address<\/dt><dd>\{form\.home_address\.trim\(\)\}/);
+  assert.match(patientSource, /<strong>Symptoms:<\/strong> \{form\.symptoms\.join/);
+  assert.match(patientSource, /booking\.duration_days\} day/);
+  assert.match(patientSource, /getHomeVisitReviewIssues/);
+  assert.match(patientSource, /disabled=\{create\.isPending\|\|!canSubmit\}/);
+  assert.match(patientSource, /Full visit address \(required\)/);
+  assert.match(patientSource, /Home-visit fees and online payment are not configured/);
+  assert.match(patientSource, /booking\.billing_status===['"]unconfigured/);
   assert.doesNotMatch(patientSource, /api\.(?:post|put)\(['"]\/(?:payments|checkout)/i);
   assert.match(adminSource, /api\.put\(`\/demo-services\/patients\/\$\{patientId\}\/entitlement`/);
   assert.match(adminSource, /api\.patch\(`\/home-visit-requests\/admin\/\$\{requestId\}`/);
@@ -452,7 +637,7 @@ test('patient home benchmark keeps one truthful next action and compact service 
 });
 
 
-test('patient booking stays task-focused while preserving all four selections', async () => {
+test('patient booking keeps service, date, time, review, and verified Test Mode payment steps', async () => {
   const [bookingSource, homeVisitSource, clinicDateSource] = await Promise.all([
     source('src/pages/patient/BookAppointment.jsx'),
     source('src/pages/patient/HomeVisitRequests.jsx'),
@@ -469,13 +654,45 @@ test('patient booking stays task-focused while preserving all four selections', 
   assert.match(bookingSource, /No times are available for this date/);
   assert.match(bookingSource, /aria-describedby=\{!slot\.available \? 'booking-unavailable-help'/);
   assert.match(bookingSource, /Configurable demo schedule|Demo schedule/);
-  assert.match(bookingSource, /Confirm booking/);
-  assert.match(bookingSource, /No payment taken/);
+  assert.match(bookingSource, /step === 5 && confirmedAppointment/);
+  assert.match(bookingSource, /Reserve appointment & continue to payment/);
+  assert.match(bookingSource, /api\.get\('\/payments\/readiness'\)/);
+  assert.match(bookingSource, /No appointment was booked/);
+  const paymentReadinessRequest = bookingSource.indexOf("api.get('/payments/readiness')");
+  const unavailablePaymentGuard = bookingSource.indexOf('if (!readiness.available)');
+  const appointmentCreationRequest = bookingSource.indexOf("api.post('/appointments', appointmentData)");
+  assert.ok(paymentReadinessRequest >= 0 && paymentReadinessRequest < unavailablePaymentGuard);
+  assert.ok(unavailablePaymentGuard < appointmentCreationRequest);
+  assert.match(bookingSource, /Razorpay Test Mode/);
+  assert.match(bookingSource, /api\.post\(`\/appointments\/\$\{confirmedAppointment\.id\}\/payments\/order`\)/);
+  assert.match(bookingSource, /payments\/verify/);
+  assert.match(bookingSource, /paymentAppointmentId/);
+  assert.match(bookingSource, /paymentAppointmentQuery/);
+  assert.match(bookingSource, /paymentStatusQuery\.data\?\.status === 'success'/);
+  assert.match(bookingSource, /https:\/\/checkout\.razorpay\.com\/v1\/checkout\.js/);
+  assert.doesNotMatch(bookingSource, /billing_status:\s*['"]paid['"]/);
+  assert.doesNotMatch(bookingSource, /<input[^>]+(?:card number|CVV|UPI PIN)/i);
   assert.match(bookingSource, /isOutsideBookingWindow/);
   assert.match(homeVisitSource, /min=\{bookingWindow\.data\?\.earliest_date\}/);
   assert.match(homeVisitSource, /max=\{bookingWindow\.data\?\.latest_date\}/);
   assert.match(clinicDateSource, /timeZone: CLINIC_TIMEZONE/);
   assert.doesNotMatch(homeVisitSource, /2030-01-10/);
+});
+
+
+test('patient dashboard and history render only backend payment status and INR billing amount', async () => {
+  const [dashboardSource, historySource] = await Promise.all([
+    source('src/pages/patient/PatientDashboard.jsx'),
+    source('src/pages/patient/PatientHistory.jsx'),
+  ]);
+
+  assert.match(dashboardSource, /nextAppointment\.billing_status === 'paid'/);
+  assert.match(dashboardSource, /nextAppointment\.payment_status === 'failed'/);
+  assert.match(historySource, /appointment\.billing_status === 'paid'/);
+  assert.match(historySource, /appointment\.payment_status === 'abandoned'/);
+  assert.match(historySource, /appointment\.billing_amount/);
+  assert.match(historySource, /Continue to payment/);
+  assert.match(dashboardSource, /paymentAppointmentId=\$\{nextAppointment\.id\}/);
 });
 
 
@@ -553,9 +770,10 @@ test('patient appointment timeline separates lifecycle states and limits self-se
 
 
 test('laboratory workflow keeps assignment, finalized upload, admin publication, and released-report access role scoped', async () => {
-  const [appSource, adminSource, adminLabSource, laboratorySource, patientSource, doctorSource] = await Promise.all([
+  const [appSource, roleRouteSource, adminSource, adminLabSource, laboratorySource, patientSource, doctorSource] = await Promise.all([
     source('src/App.jsx'),
-    source('src/pages/admin/DemoServices.jsx'),
+    source('src/routes/RoleProtectedRoute.jsx'),
+    source('src/pages/admin/AdminLaboratoryRequests.jsx'),
     source('src/pages/admin/AdminLabRequestsPanel.jsx'),
     source('src/pages/laboratorian/LaboratoryDashboard.jsx'),
     source('src/pages/patient/LaboratoryRequests.jsx'),
@@ -564,6 +782,7 @@ test('laboratory workflow keeps assignment, finalized upload, admin publication,
 
   assert.match(appSource, /allowedRoles=\{\['laboratorian'\]\}/);
   assert.match(appSource, /path="\/laboratory"/);
+  assert.match(roleRouteSource, /laboratorian: '\/laboratory\/dashboard'/);
   assert.match(adminSource, /AdminLabRequestsPanel/);
   assert.match(adminLabSource, /\/users\/laboratorians/);
   assert.match(adminLabSource, /\/lab-requests\/admin\/\$\{requestId\}\/assignment/);
@@ -573,7 +792,10 @@ test('laboratory workflow keeps assignment, finalized upload, admin publication,
   assert.match(adminLabSource, /I intend to publish this exact finalized PDF/);
   assert.match(laboratorySource, /\/lab-requests\/laboratory\/assigned/);
   assert.match(laboratorySource, /'Content-Type': 'application\/pdf'/);
+  assert.match(laboratorySource, /Request status:/);
   assert.match(laboratorySource, /Upload finalized report/);
+  assert.match(laboratorySource, /Report uploaded and awaiting administrator publication\./);
+  assert.match(laboratorySource, /file: null, error: 'Choose a PDF up to 5 MB\.'/);
   assert.match(laboratorySource, /remains private until an administrator publishes it/);
   assert.doesNotMatch(laboratorySource, /publish-report|Publish report to patient/);
   assert.match(patientSource, /\/lab-requests\/me\/reports/);
@@ -605,4 +827,37 @@ test('administrator clinician schedules remain draft-first, role-scoped, and con
   assert.match(scheduleSource, /min=\{bookingWindow\.data\?\.earliest_date\}/);
   assert.match(scheduleSource, /max=\{bookingWindow\.data\?\.latest_date\}/);
   assert.doesNotMatch(sidebarSource, /reception[^]*clinician schedule/i);
+});
+
+
+test('captured payments on cancelled appointments are shown as requiring reconciliation', async () => {
+  const [billingSource, historySource, dashboardSource, bookingSource] = await Promise.all([
+    source('src/pages/admin/Billing.jsx'),
+    source('src/pages/patient/PatientHistory.jsx'),
+    source('src/pages/patient/PatientDashboard.jsx'),
+    source('src/pages/patient/BookAppointment.jsx'),
+  ]);
+
+  for (const screen of [billingSource, historySource, dashboardSource]) {
+    assert.match(screen, /payment_status === 'reconciliation_required'/);
+    assert.match(screen, /clinic reconciliation required|Provider capture requires clinic reconciliation|appointment was cancelled/);
+  }
+  assert.match(bookingSource, /status === 'reconciliation_required'/);
+  assert.match(bookingSource, /appointment was cancelled/);
+  assert.match(billingSource, /Reconciliation required/);
+  assert.match(bookingSource, /paymentNeedsReconciliation \? \(/);
+  assert.match(bookingSource, /do not start another checkout/);
+});
+
+
+test('admin billing can retry captured-payment reconciliation and review unresolved captures', async () => {
+  const billingSource = await source('src/pages/admin/Billing.jsx');
+
+  assert.match(billingSource, /payments\/admin\/reconcile-captured/);
+  assert.match(billingSource, /payments\/admin\/captured-review/);
+  assert.match(billingSource, /Reconcile captured payments/);
+  assert.match(billingSource, /invalidateQueries\(\{ queryKey: \['billingRecords'\] \}\)/);
+  assert.match(billingSource, /Captures requiring clinic review/);
+  assert.match(billingSource, /capture\.reason/);
+  assert.match(billingSource, /capture\.amount_paise \/ 100/);
 });

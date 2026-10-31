@@ -18,6 +18,7 @@ class Patient(Document):
     primary_doctor_id: Optional[PydanticObjectId] = None
 
     saved_home_address: Optional[str] = None
+    demo_rehearsal_tag: Optional[str] = None
 
     class Settings:
         name = "patients"

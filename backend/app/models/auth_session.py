@@ -12,6 +12,7 @@ class AuthSession(Document):
     csrf_token_hash: str
     expires_at: datetime
     revoked_at: Optional[datetime] = None
+    demo_rehearsal_tag: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     rotated_at: datetime = Field(default_factory=datetime.utcnow)
 

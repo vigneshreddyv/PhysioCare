@@ -42,10 +42,10 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
   );
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className="grid min-w-0 grid-cols-1 gap-6 md:grid-cols-2">
       {/* Appointment Trends */}
-      <div className="portal-dashboard-card p-5 md:p-6">
-        <h3 className="text-lg font-semibold mb-4">
+      <div className="portal-dashboard-card flex min-h-[22rem] min-w-0 flex-col p-5 md:p-6">
+        <h3 className="mb-3 text-lg font-semibold">
           Appointment Activity ({stats?.period_days || 30} Days)
         </h3>
         {!statsLoading && appointmentsChartData.length > 0 && (
@@ -67,8 +67,8 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
       </div>
 
       {/* Revenue Trend */}
-      <div className="portal-dashboard-card p-5 md:p-6">
-        <h3 className="text-lg font-semibold mb-4">
+      <div className="portal-dashboard-card flex min-h-[22rem] min-w-0 flex-col p-5 md:p-6">
+        <h3 className="mb-3 text-lg font-semibold">
           Recorded Paid Totals (6 Months)
         </h3>
         {!statsLoading && revenueChartData.length > 0 && (
@@ -91,8 +91,8 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
       </div>
 
       {/* Services Distribution */}
-      <div className="portal-dashboard-card p-5 md:p-6">
-        <h3 className="text-lg font-semibold mb-4">
+      <div className="portal-dashboard-card flex min-h-[22rem] min-w-0 flex-col p-5 md:p-6">
+        <h3 className="mb-3 text-lg font-semibold">
           Doctor Specializations
         </h3>
         {!statsLoading && specializationData.length > 0 && (
@@ -113,8 +113,8 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
       </div>
 
       {/* Today's Schedule Overview */}
-      <div className="portal-dashboard-card p-5 md:p-6">
-        <h3 className="text-lg font-semibold mb-4">
+      <div className="portal-dashboard-card flex min-h-[22rem] min-w-0 flex-col p-5 md:p-6">
+        <h3 className="mb-3 text-lg font-semibold">
           Today's Schedule Overview
         </h3>
         <div className="space-y-3">

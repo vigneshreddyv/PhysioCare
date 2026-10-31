@@ -203,12 +203,26 @@ export default function PatientsList() {
                         >
                           History
                         </button>
+                        <button
+                          className="portal-inline-action text-primary hover:text-secondary text-sm font-semibold ml-1"
+                          onClick={() => navigate(`/admin/patients/${patient.id}/care-plan`)}
+                        >
+                          Care plan
+                        </button>
+                        <button
+                          className="portal-inline-action text-primary hover:text-secondary text-sm font-semibold ml-1"
+                          onClick={() => navigate(`/admin/patients/${patient.id}/exercises`)}
+                        >
+                          Exercises
+                        </button>
                       </td>}
                       {isReceptionist && <td className="p-4 text-right">
                         <button type="button" className="portal-inline-action text-primary font-semibold" onClick={() => beginContactEdit(patient)}>Edit contact</button>
                       </td>}
                       {isDoctor && <td className="p-4 text-right">
-                        <button type="button" className="portal-inline-action text-primary font-semibold" onClick={() => navigate(`/doctor/patients/${patient.id}`)}>View history</button>
+                        <button type="button" className="portal-inline-action text-primary font-semibold mr-1" onClick={() => navigate(`/doctor/patients/${patient.id}`)}>View history</button>
+                        <button type="button" className="portal-inline-action text-primary font-semibold mr-1" onClick={() => navigate(`/doctor/patients/${patient.id}/care-plan`)}>Care plan</button>
+                        <button type="button" className="portal-inline-action text-primary font-semibold" onClick={() => navigate(`/doctor/patients/${patient.id}/exercises`)}>Exercises</button>
                       </td>}
                     </tr>
                   ))}
@@ -233,12 +247,16 @@ export default function PatientsList() {
                   {isAdmin && <div className="portal-mobile-record__actions">
                     <button type="button" className="bg-primary text-on-primary font-semibold" onClick={() => navigate(`/admin/patients-edit/${patient.id}`)}>Edit</button>
                     <button type="button" className="border border-outline-variant text-on-surface font-semibold" onClick={() => navigate(`/admin/patients-history/${patient.id}`)}>History</button>
+                    <button type="button" className="border border-outline-variant text-on-surface font-semibold" onClick={() => navigate(`/admin/patients/${patient.id}/care-plan`)}>Care plan</button>
+                    <button type="button" className="border border-outline-variant text-on-surface font-semibold" onClick={() => navigate(`/admin/patients/${patient.id}/exercises`)}>Exercises</button>
                   </div>}
                   {isReceptionist && <div className="portal-mobile-record__actions">
                     <button type="button" className="bg-primary text-on-primary font-semibold" onClick={() => beginContactEdit(patient)}>Edit contact</button>
                   </div>}
                   {isDoctor && <div className="portal-mobile-record__actions">
                     <button type="button" className="bg-primary text-on-primary font-semibold" onClick={() => navigate(`/doctor/patients/${patient.id}`)}>View history</button>
+                    <button type="button" className="bg-primary text-on-primary font-semibold" onClick={() => navigate(`/doctor/patients/${patient.id}/care-plan`)}>Care plan</button>
+                    <button type="button" className="bg-primary text-on-primary font-semibold" onClick={() => navigate(`/doctor/patients/${patient.id}/exercises`)}>Exercises</button>
                   </div>}
                 </article>
               ))}

@@ -9,6 +9,7 @@ class User(Document):
     role: str
     full_name: str
     is_active: bool = True
+    demo_rehearsal_tag: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:

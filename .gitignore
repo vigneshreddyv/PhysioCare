@@ -249,3 +249,15 @@ dump/
 # Generated uploads
 uploads/
 media/
+# Local environment variants
+.env.*
+frontend/.env.*
+
+# Local worktrees and AI tool state
+.worktrees/
+.claude/
+.freebuff/
+
+# Temporary backup files
+*.backup
+*.bak

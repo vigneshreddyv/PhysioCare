@@ -41,12 +41,20 @@ class HomeVisitRequestCreate(BaseModel):
     pain_severity: Literal["low", "medium", "high"]
     save_address: bool = False
 
-    @field_validator("home_address", "reason", "city")
+    @field_validator("home_address", "city")
     @classmethod
     def normalize_sensitive_text(cls, value: str) -> str:
         normalized = " ".join(value.split())
         if not normalized:
             raise ValueError("This field cannot be empty")
+        return normalized
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str:
+        normalized = " ".join((value or "").split())
+        if cls.__name__ != "HomeVisitBookingCreate" and len(normalized) < 5:
+            raise ValueError("Instructions must contain at least 5 characters")
         return normalized
 
     @field_validator("body_regions", "symptoms")
@@ -57,6 +65,7 @@ class HomeVisitRequestCreate(BaseModel):
 
 class HomeVisitBookingCreate(HomeVisitRequestCreate):
     preferred_doctor_id: str | None = None
+    reason: str | None = Field(default="", max_length=1000)
     appointment_date: date
     time_slot: str
     submission_key: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")

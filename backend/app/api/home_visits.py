@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.middleware.auth import RoleChecker
 from app.models.user import User
@@ -11,7 +11,6 @@ from app.schemas.home_visit import (
     DoctorHomeVisitRequestOut,
     HomeVisitBookingCreate,
     HomeVisitDoctorAssignment,
-    HomeVisitRequestCreate,
     HomeVisitContextOut,
     HomeVisitRequestOut,
     HomeVisitRequestStatusUpdate,
@@ -58,12 +57,14 @@ async def set_demo_entitlement(
     )
 
 
-@router.post("/home-visit-requests", response_model=HomeVisitRequestOut, status_code=status.HTTP_201_CREATED)
+@router.post("/home-visit-requests", status_code=status.HTTP_410_GONE)
 async def create_home_visit_request(
-    schema: HomeVisitRequestCreate,
     current_user: User = Depends(RoleChecker(["patient"])),
 ):
-    return await HomeVisitService.create_request(str(current_user.id), schema)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Legacy home-visit requests are retired. Use direct home-visit booking.",
+    )
 
 
 @router.get("/home-visit-bookings/availability", response_model=AppointmentAvailabilityOut)

@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import api from '../../services/api';
 import { useAuth } from '../../context/useAuth';
 import { useNavigate } from 'react-router-dom';
 
@@ -6,6 +8,15 @@ export default function Navbar({ onMenuToggle, menuOpen = false }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { data: unreadData } = useQuery({
+    queryKey: ['notificationsUnreadCount'],
+    queryFn: async () => {
+      const response = await api.get('/notifications/unread-count');
+      return response.data;
+    },
+    enabled: Boolean(user),
+  });
+  const unreadCount = unreadData?.count || 0;
   const profileRef = useRef(null);
 
   const initials = user?.full_name
@@ -63,8 +74,13 @@ export default function Navbar({ onMenuToggle, menuOpen = false }) {
 
       {/* Right Side: Quick Links & Avatar */}
       <div className="flex items-center gap-2 relative">
-        <button onClick={() => navigate('/notifications')} className="portal-icon-button" aria-label="Open notifications">
+        <button onClick={() => navigate('/notifications')} className="portal-icon-button relative" aria-label="Open notifications">
           <span className="material-symbols-outlined" aria-hidden="true">notifications</span>
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-primary text-on-primary text-[10px] font-bold rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </button>
         <button className="portal-icon-button hidden sm:inline-flex" aria-label="Open help">
           <span className="material-symbols-outlined" aria-hidden="true">help</span>

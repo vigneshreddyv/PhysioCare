@@ -8,6 +8,7 @@ from pymongo import ASCENDING, IndexModel
 class LabRequest(Document):
     patient_id: PydanticObjectId
     submission_key: str | None = None
+    demo_rehearsal_tag: str | None = None
     mode: str
     selected_tests: list[str] = Field(default_factory=list)
     home_address: str | None = None

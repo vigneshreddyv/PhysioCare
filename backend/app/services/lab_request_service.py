@@ -7,6 +7,8 @@ from uuid import uuid4
 from fastapi import HTTPException, status
 
 from app.core.config import settings
+from app.core.lab_demo import LAB_DEMO_REHEARSAL_TAG
+from app.core.lab_demo_storage import report_file_path, secure_report_storage
 from app.models.lab_request import LabRequest
 from app.repositories.lab_request_repository import LabRequestRepository
 from app.repositories.profile_repository import ProfileRepository
@@ -23,9 +25,25 @@ from app.schemas.lab_request import (
 class LabRequestService:
     @staticmethod
     async def create(user_id: str, schema: LabRequestCreate, submission_key: str | None = None) -> LabRequestOut:
+        if schema.demo_rehearsal_tag is not None and (
+            not settings.LAB_DEMO_MODE
+            or schema.demo_rehearsal_tag != LAB_DEMO_REHEARSAL_TAG
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Demo tagging is available only in the isolated laboratory demo",
+            )
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
         if not patient:
             raise HTTPException(status_code=404, detail="Patient profile not found")
+        if (
+            schema.demo_rehearsal_tag is not None
+            and patient.demo_rehearsal_tag != schema.demo_rehearsal_tag
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the tagged demo patient may create a tagged demo request",
+            )
         if schema.mode == "home_collection" and schema.city.casefold() != settings.DEMO_HOME_SERVICE_CITY.casefold():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -38,6 +56,7 @@ class LabRequestService:
             selected_tests=schema.selected_tests,
             home_address=schema.home_address,
             city=settings.DEMO_HOME_SERVICE_CITY if schema.mode == "home_collection" else None,
+            demo_rehearsal_tag=schema.demo_rehearsal_tag,
         ))
         if schema.mode == "home_collection" and schema.save_address:
             patient.saved_home_address = schema.home_address
@@ -102,8 +121,8 @@ class LabRequestService:
         if not safe_name.lower().endswith(".pdf"):
             safe_name = f"{safe_name or 'laboratory-report'}.pdf"
         storage_key = f"{uuid4().hex}.pdf"
-        storage_root = Path(settings.LAB_REPORT_STORAGE_DIR)
-        storage_path = storage_root / storage_key
+        storage_root = secure_report_storage() if settings.LAB_DEMO_MODE else Path(settings.LAB_REPORT_STORAGE_DIR)
+        storage_path = report_file_path(storage_key)
         previous_key = request.report_storage_key
 
         def write_private_file():
@@ -148,7 +167,10 @@ class LabRequestService:
         storage_key = Path(request.report_storage_key).name
         if storage_key != request.report_storage_key:
             raise HTTPException(status_code=409, detail="The finalized report file is unavailable")
-        path = Path(settings.LAB_REPORT_STORAGE_DIR) / storage_key
+        try:
+            path = report_file_path(storage_key)
+        except (RuntimeError, ValueError):
+            raise HTTPException(status_code=409, detail="The finalized report file is unavailable") from None
         if not path.is_file():
             raise HTTPException(status_code=409, detail="The finalized report file is unavailable")
         changed = await LabRequestRepository.publish_report(
@@ -219,7 +241,10 @@ class LabRequestService:
         storage_key = Path(request.report_storage_key).name
         if storage_key != request.report_storage_key:
             raise HTTPException(status_code=404, detail="Laboratory report not found")
-        path = Path(settings.LAB_REPORT_STORAGE_DIR) / storage_key
+        try:
+            path = report_file_path(storage_key)
+        except (RuntimeError, ValueError):
+            raise HTTPException(status_code=404, detail="Laboratory report not found") from None
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Laboratory report file is unavailable")
         return path, request.report_file_name or "laboratory-report.pdf"

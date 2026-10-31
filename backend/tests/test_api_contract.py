@@ -1,4 +1,5 @@
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -16,10 +17,17 @@ from unittest.mock import AsyncMock
 from app.api.analytics import router as analytics_router
 from app.api.auth import set_session_cookies
 from app.api.appointments import router as appointments_router
-from app.api.home_visits import router as home_visits_router
+from app.api.home_visits import create_home_visit_request, router as home_visits_router
 from app.api.clinician_schedules import router as clinician_schedules_router
 from app.api.lab_requests import router as lab_requests_router, upload_finalized_report as upload_finalized_report_api
-from app.api.users import list_patients as list_patients_api, list_reception_patients as list_reception_patients_api, router as users_router
+from app.api.reports import router as reports_router
+from app.api.users import (
+    create_staff as create_staff_api,
+    list_patients as list_patients_api,
+    list_reception_patients as list_reception_patients_api,
+    list_staff as list_staff_api,
+    router as users_router,
+)
 from app.core.appointment_time import (
     active_slot_claim,
     booking_window,
@@ -56,7 +64,7 @@ from app.schemas.appointment import (
     ReceptionAppointmentCreate,
     ReceptionAppointmentOut,
 )
-from app.schemas.auth import StaffCreate, UserRegister
+from app.schemas.auth import StaffCreate, StaffOut, UserRegister
 from app.schemas.patient import (
     DoctorPatientOut,
     PatientProfileUpdate,
@@ -160,6 +168,7 @@ def test_openapi_exposes_current_api_contract_without_starting_database():
         "/api/lab-requests/admin",
         "/api/lab-requests/admin/{request_id}",
     }.issubset(schema["paths"])
+    assert {"get", "post"}.issubset(schema["paths"]["/api/users/staff"])
 
 
 def test_public_registration_contract_has_no_role_selector():
@@ -186,6 +195,170 @@ def test_public_registration_contract_has_no_role_selector():
         role="laboratorian",
     )
     assert laboratorian.role == "laboratorian"
+
+
+def test_staff_create_schema_validates_required_fields_and_supported_roles():
+    staff = StaffCreate(
+        email="lab@example.com",
+        password="a-safe-demo-password",
+        full_name=" Fictional Laboratorian ",
+        role="laboratorian",
+    )
+    assert staff.full_name == "Fictional Laboratorian"
+
+    for fields in (
+        {"email": "not-an-email", "password": "a-safe-demo-password", "full_name": "Staff", "role": "doctor"},
+        {"email": "staff@example.com", "password": "short", "full_name": "Staff", "role": "doctor"},
+        {"email": "staff@example.com", "password": "a-safe-demo-password", "full_name": " ", "role": "doctor"},
+        {"email": "staff@example.com", "password": "a-safe-demo-password", "full_name": "Staff", "role": "patient"},
+    ):
+        with pytest.raises(ValidationError):
+            StaffCreate(**fields)
+
+
+def test_staff_creation_is_admin_only_and_list_route_is_admin_only():
+    assert allowed_roles(route_for(users_router, "/users/staff", "POST")) == {"admin"}
+    assert allowed_roles(route_for(users_router, "/users/staff", "GET")) == {"admin"}
+
+    with pytest.raises(HTTPException) as error:
+        RoleChecker(["admin"])(type("UserDouble", (), {"role": "doctor"})())
+    assert error.value.status_code == 403
+
+
+def test_staff_creation_hashes_password_and_returns_no_sensitive_fields(monkeypatch):
+    monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.services.auth_service.get_password_hash",
+        lambda value: f"hashed:{value}",
+    )
+    created_values = {}
+
+    def create_user(**values):
+        created_values.update(values)
+        return type("UserDouble", (), values)()
+
+    monkeypatch.setattr("app.services.auth_service.User", create_user)
+    monkeypatch.setattr(UserRepository, "create", AsyncMock(side_effect=lambda user: user))
+    schema = StaffCreate(
+        email="lab@example.com",
+        password="a-safe-demo-password",
+        full_name="Fictional Laboratorian",
+        role="laboratorian",
+    )
+
+    asyncio.run(AuthService.register_staff(schema))
+    user = type("UserDouble", (), {
+        "email": schema.email,
+        "role": schema.role,
+    })()
+    monkeypatch.setattr(AuthService, "register_staff", AsyncMock(return_value=user))
+    response = asyncio.run(create_staff_api(schema, type("AdminDouble", (), {"role": "admin"})()))
+
+    assert created_values["hashed_password"] == "hashed:a-safe-demo-password"
+    assert created_values["hashed_password"] != schema.password
+    assert response == {
+        "message": "Staff account created",
+        "email": "lab@example.com",
+        "role": "laboratorian",
+    }
+    assert "password" not in response
+    assert "hashed_password" not in response
+
+
+def test_duplicate_staff_email_is_rejected(monkeypatch):
+    monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=object()))
+    create = AsyncMock()
+    monkeypatch.setattr(UserRepository, "create", create)
+    schema = StaffCreate(
+        email="existing@example.com",
+        password="a-safe-demo-password",
+        full_name="Fictional Staff",
+        role="laboratorian",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(AuthService.register_staff(schema))
+    assert error.value.status_code == 400
+    create.assert_not_awaited()
+
+
+def test_concurrent_duplicate_staff_email_is_rejected(monkeypatch):
+    monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "app.services.auth_service.get_password_hash",
+        lambda value: f"hashed:{value}",
+    )
+    monkeypatch.setattr(
+        UserRepository,
+        "create",
+        AsyncMock(side_effect=DuplicateKeyError("duplicate key")),
+    )
+    monkeypatch.setattr(
+        "app.services.auth_service.User",
+        lambda **values: type("UserDouble", (), values)(),
+    )
+    schema = StaffCreate(
+        email="concurrent@example.com",
+        password="a-safe-demo-password",
+        full_name="Fictional Staff",
+        role="laboratorian",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(AuthService.register_staff(schema))
+    assert error.value.status_code == 400
+    assert error.value.detail == "Email already registered"
+
+
+def test_staff_directory_returns_only_safe_fields_and_includes_account_status(monkeypatch):
+    created = datetime(2026, 10, 30)
+    user = type("UserDouble", (), {
+        "id": PydanticObjectId("507f1f77bcf86cd799439011"),
+        "full_name": "Fictional Laboratorian",
+        "email": "lab@example.com",
+        "role": "laboratorian",
+        "is_active": False,
+        "created_at": created,
+        "hashed_password": "must-not-be-returned",
+        "password": "must-not-be-returned",
+    })()
+    monkeypatch.setattr(UserRepository, "list_staff", AsyncMock(return_value=[user]))
+
+    staff = asyncio.run(UserService.list_staff())
+    serialized = staff[0].model_dump()
+    response_model_fields = set(StaffOut.model_fields)
+
+    assert serialized == {
+        "id": "507f1f77bcf86cd799439011",
+        "full_name": "Fictional Laboratorian",
+        "email": "lab@example.com",
+        "role": "laboratorian",
+        "is_active": False,
+        "created_at": created,
+    }
+    assert response_model_fields == set(serialized)
+    assert "hashed_password" not in serialized
+    assert "password" not in serialized
+
+
+def test_laboratorian_uses_shared_authentication_flow(monkeypatch):
+    user = type("UserDouble", (), {
+        "id": PydanticObjectId("507f1f77bcf86cd799439011"),
+        "email": "lab@example.com",
+        "role": "laboratorian",
+        "hashed_password": "stored-password-hash",
+    })()
+    session = object()
+    monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=user))
+    monkeypatch.setattr("app.services.auth_service.verify_password", lambda _password, _hashed: True)
+    monkeypatch.setattr("app.services.auth_service.AuthSession", lambda **_values: session)
+    monkeypatch.setattr("app.services.auth_service.SessionRepository.create", AsyncMock(return_value=session))
+    monkeypatch.setattr(AuthService, "_rotate_session", AsyncMock(return_value="laboratorian-session"))
+
+    result = asyncio.run(AuthService.login("lab@example.com", "not-logged"))
+
+    assert result == "laboratorian-session"
+    AuthService._rotate_session.assert_awaited_once_with(session, user)
 
 
 def test_role_guards_match_authorized_workflows():
@@ -228,6 +401,9 @@ def test_role_guards_match_authorized_workflows():
     assert allowed_roles(route_for(lab_requests_router, "/lab-requests/me", "GET")) == {"patient"}
     assert allowed_roles(route_for(lab_requests_router, "/lab-requests/admin", "GET")) == {"admin"}
     assert allowed_roles(route_for(lab_requests_router, "/lab-requests/admin/{request_id}", "PATCH")) == {"admin"}
+    assert allowed_roles(route_for(reports_router, "/reports", "POST")) == {"admin", "doctor"}
+    assert allowed_roles(route_for(reports_router, "/reports", "GET")) == {"patient"}
+    assert allowed_roles(route_for(reports_router, "/reports/{report_id}/download", "GET")) == {"patient"}
     assert route_for(users_router, "/users/public/doctors", "GET").dependant.dependencies == []
 
 
@@ -268,6 +444,26 @@ def test_patient_can_update_only_own_name_phone_and_recorded_gender(monkeypatch)
     assert patient.gender == "Woman"
     UserRepository.save.assert_awaited_once_with(user)
     ProfileRepository.save_patient.assert_awaited_once_with(patient)
+
+
+def test_authenticated_patient_profile_read_returns_only_profile_contract_fields(monkeypatch):
+    patient = type("PatientDouble", (), {
+        "id": "patient-id", "user_id": "user-id", "phone": "+91 90000 00000",
+        "date_of_birth": "1990-01-01", "gender": "Woman", "subscription_status": "inactive",
+    })()
+    user = type("UserDouble", (), {"full_name": "Fictional Patient", "email": "patient@example.test"})()
+    monkeypatch.setattr(ProfileRepository, "get_patient_by_user_id", AsyncMock(return_value=patient))
+    monkeypatch.setattr(UserRepository, "get_by_id", AsyncMock(return_value=user))
+
+    result = asyncio.run(UserService.get_patient_profile("user-id"))
+
+    assert result.model_dump() == {
+        "id": "patient-id", "full_name": "Fictional Patient", "email": "patient@example.test",
+        "phone": "+91 90000 00000", "date_of_birth": "1990-01-01", "gender": "Woman",
+        "subscription_status": "inactive",
+    }
+    ProfileRepository.get_patient_by_user_id.assert_awaited_once_with("user-id")
+    UserRepository.get_by_id.assert_awaited_once_with("user-id")
 
 
 def test_admin_booking_uses_selected_existing_patient_and_india_time(monkeypatch):
@@ -814,68 +1010,34 @@ def test_lab_request_repository_returns_existing_record_after_duplicate_key(monk
     LabRequest.find_one.assert_awaited_once()
 
 
-def test_home_visit_request_requires_active_demo_entitlement(monkeypatch):
-    patient = type("PatientDouble", (), {"id": "patient-profile"})()
-    monkeypatch.setattr(ProfileRepository, "get_patient_by_user_id", AsyncMock(return_value=patient))
-    monkeypatch.setattr(DemoServiceRepository, "get_entitlement", AsyncMock(return_value=None))
-    monkeypatch.setattr(DemoServiceRepository, "create_request", AsyncMock())
+def test_legacy_home_visit_request_creation_is_retired():
+    endpoint_error = asyncio.run(_call_retired_home_visit_endpoint())
+    assert endpoint_error.status_code == 410
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(HomeVisitService.create_request(
             "patient-user",
             HomeVisitRequestCreate(
                 preferred_doctor_id="doctor-profile",
-                home_address="12 Fictional Road, Bengaluru",
+                home_address="12 Fictional Road, Nellore",
                 reason="Fictional mobility request",
-                city="Nellore", body_regions=["Knee"], symptoms=["Pain"], duration_days=2, pain_severity="low",
+                city="Nellore",
+                body_regions=["Knee"],
+                symptoms=["Pain"],
+                duration_days=2,
+                pain_severity="low",
             ),
         ))
 
-    assert error.value.status_code == 403
-    DemoServiceRepository.create_request.assert_not_awaited()
+    assert error.value.status_code == 410
 
 
-def test_home_visit_request_is_pending_and_does_not_create_appointment(monkeypatch):
-    patient = type("PatientDouble", (), {"id": "507f1f77bcf86cd799439011"})()
-    doctor = type("DoctorDouble", (), {"id": "507f1f77bcf86cd799439012"})()
-    entitlement = type("EntitlementDouble", (), {"active": True})()
-
-    class RequestDouble:
-        def __init__(self, **values):
-            for key, value in values.items():
-                setattr(self, key, value)
-            self.status = "pending_clinic_confirmation"
-            self.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            self.updated_at = self.created_at
-
-    async def create_request(request):
-        request.id = "request-id"
-        return request
-
-    monkeypatch.setattr(ProfileRepository, "get_patient_by_user_id", AsyncMock(return_value=patient))
-    monkeypatch.setattr(ProfileRepository, "get_doctor_by_id", AsyncMock(return_value=doctor))
-    monkeypatch.setattr(DemoServiceRepository, "get_entitlement", AsyncMock(return_value=entitlement))
-    monkeypatch.setattr(DemoServiceRepository, "create_request", create_request)
-    monkeypatch.setattr("app.services.home_visit_service.HomeVisitRequest", RequestDouble)
-    monkeypatch.setattr(HomeVisitService, "_format_full", AsyncMock(return_value="formatted-request"))
-
-    result = asyncio.run(HomeVisitService.create_request(
-        "patient-user",
-        HomeVisitRequestCreate(
-            preferred_doctor_id="507f1f77bcf86cd799439012",
-            home_address="12 Fictional Road, Nellore",
-            reason="Fictional mobility request",
-            city="Nellore", body_regions=["Knee"], symptoms=["Pain"], duration_days=2, pain_severity="low",
-        ),
-    ))
-
-    assert result == "formatted-request"
-    created = HomeVisitService._format_full.await_args.args[0]
-    assert created.status == "pending_clinic_confirmation"
-    assert str(created.patient_id) == "507f1f77bcf86cd799439011"
-    assert str(created.preferred_doctor_id) == "507f1f77bcf86cd799439012"
-    assert not hasattr(created, "appointment_date")
-    assert not hasattr(created, "time_slot")
+async def _call_retired_home_visit_endpoint():
+    try:
+        await create_home_visit_request(current_user=type("UserDouble", (), {"id": "patient-user"})())
+    except HTTPException as error:
+        return error
+    raise AssertionError("retired endpoint unexpectedly returned successfully")
 
 
 def test_home_visit_booking_schema_requires_slot_and_idempotency_key():
@@ -900,11 +1062,72 @@ def test_home_visit_booking_schema_requires_slot_and_idempotency_key():
         "preferred_doctor_id": None,
     })
     assert no_preference.preferred_doctor_id is None
+    for instructions in (None, "", "   "):
+        without_instructions = HomeVisitBookingCreate.model_validate({
+            **booking.model_dump(),
+            "reason": instructions,
+        })
+        assert without_instructions.reason == ""
+    omitted_instructions = booking.model_dump()
+    omitted_instructions.pop("reason")
+    assert HomeVisitBookingCreate.model_validate(omitted_instructions).reason == ""
+    with pytest.raises(ValidationError):
+        HomeVisitRequestCreate.model_validate({
+            "preferred_doctor_id": "507f1f77bcf86cd799439012",
+            "home_address": "12 Fictional Road, Nellore",
+            "reason": "",
+            "city": "Nellore",
+            "body_regions": ["Knee"],
+            "symptoms": ["Pain"],
+            "duration_days": 2,
+            "pain_severity": "low",
+        })
     with pytest.raises(ValidationError):
         HomeVisitBookingCreate.model_validate({
             **booking.model_dump(),
             "submission_key": "short",
         })
+
+
+def test_home_visit_access_status_distinguishes_enabled_feature_from_missing_patient_grant(monkeypatch):
+    patient = type("PatientDouble", (), {"id": "patient-profile"})()
+    monkeypatch.setattr(settings, "DEMO_HOME_VISIT_REQUESTS_ENABLED", True)
+    monkeypatch.setattr(ProfileRepository, "get_patient_by_user_id", AsyncMock(return_value=patient))
+    monkeypatch.setattr(DemoServiceRepository, "get_entitlement", AsyncMock(return_value=None))
+
+    result = asyncio.run(HomeVisitService.get_patient_entitlement("patient-user"))
+
+    assert result.active is False
+    assert result.requests_enabled is True
+
+
+def test_home_visit_booking_rejects_patient_without_demo_entitlement(monkeypatch):
+    patient = type("PatientDouble", (), {"id": PydanticObjectId()})()
+    monkeypatch.setattr(settings, "DEMO_HOME_VISIT_REQUESTS_ENABLED", True)
+    monkeypatch.setattr(ProfileRepository, "get_patient_by_user_id", AsyncMock(return_value=patient))
+    monkeypatch.setattr(DemoServiceRepository, "get_entitlement", AsyncMock(return_value=None))
+    monkeypatch.setattr(AppointmentRepository, "get_by_submission_claim", AsyncMock())
+    monkeypatch.setattr(AppointmentRepository, "create", AsyncMock())
+    schema = HomeVisitBookingCreate(
+        preferred_doctor_id="507f1f77bcf86cd799439012",
+        appointment_date=_future_booking_date().isoformat(),
+        time_slot="09:00 AM",
+        submission_key="fictional-no-grant-1234",
+        home_address="12 Fictional Road, Nellore",
+        reason=None,
+        city="Nellore",
+        body_regions=["Knee"],
+        symptoms=["Pain"],
+        duration_days=2,
+        pain_severity="low",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(HomeVisitService.create_booking("patient-user", schema))
+
+    assert error.value.status_code == 403
+    AppointmentRepository.get_by_submission_claim.assert_not_awaited()
+    AppointmentRepository.create.assert_not_awaited()
 
 
 def test_home_visit_booking_reserves_shared_clinician_slot_atomically(monkeypatch):
@@ -918,7 +1141,7 @@ def test_home_visit_booking_reserves_shared_clinician_slot_atomically(monkeypatc
         time_slot="09:00 AM",
         submission_key="fictional-repeat-1234",
         home_address="12 Fictional Road, Nellore",
-        reason="Fictional mobility support",
+        reason=None,
         city="Nellore",
         body_regions=["Knee"],
         symptoms=["Pain"],
@@ -953,6 +1176,48 @@ def test_home_visit_booking_reserves_shared_clinician_slot_atomically(monkeypatc
     assert created.submission_claim.startswith(f"home:{patient.id}:")
     assert created.billing_status == "unconfigured"
     assert created.billing_amount == 0
+    assert created.reason == ""
+    ClinicianScheduleService.validate_effective_slot.assert_awaited_once_with(
+        str(doctor.id), schema.appointment_date, schema.time_slot, "home_visit"
+    )
+
+
+def test_home_visit_booking_rejects_slot_removed_from_schedule_before_creating(monkeypatch):
+    patient = type("PatientDouble", (), {"id": PydanticObjectId(), "saved_home_address": None})()
+    doctor = type("DoctorDouble", (), {"id": PydanticObjectId(), "user_id": PydanticObjectId(), "accepts_home_visits": True})()
+    doctor_user = type("UserDouble", (), {"is_active": True})()
+    schema = HomeVisitBookingCreate(
+        preferred_doctor_id=str(doctor.id),
+        appointment_date=_future_booking_date().isoformat(),
+        time_slot="09:00 AM",
+        submission_key="fictional-stale-slot-1234",
+        home_address="12 Fictional Road, Nellore",
+        reason="Fictional mobility support",
+        city="Nellore",
+        body_regions=["Knee"],
+        symptoms=["Pain"],
+        duration_days=2,
+        pain_severity="low",
+    )
+    monkeypatch.setattr(HomeVisitService, "_entitled_patient", AsyncMock(return_value=patient))
+    monkeypatch.setattr(AppointmentRepository, "get_by_submission_claim", AsyncMock(return_value=None))
+    monkeypatch.setattr(ProfileRepository, "get_doctor_by_id", AsyncMock(return_value=doctor))
+    monkeypatch.setattr(UserRepository, "get_by_id", AsyncMock(return_value=doctor_user))
+    monkeypatch.setattr(
+        ClinicianScheduleService,
+        "validate_effective_slot",
+        AsyncMock(side_effect=HTTPException(status_code=422, detail="Choose a slot inside the published clinician schedule")),
+    )
+    monkeypatch.setattr(AppointmentRepository, "create", AsyncMock())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(HomeVisitService.create_booking("patient-user", schema))
+
+    assert error.value.status_code == 422
+    ClinicianScheduleService.validate_effective_slot.assert_awaited_once_with(
+        str(doctor.id), schema.appointment_date, schema.time_slot, "home_visit"
+    )
+    AppointmentRepository.create.assert_not_awaited()
 
 
 def test_home_visit_booking_repeat_returns_existing_record(monkeypatch):
@@ -1309,8 +1574,9 @@ def test_expired_refresh_token_is_rejected():
 
 
 def test_sensitive_request_and_auth_debug_logging_is_absent():
+    backend_root = Path(__file__).resolve().parents[1]
     for relative_path in ("app/main.py", "app/middleware/auth.py"):
-        source = Path(relative_path).read_text(encoding="utf-8")
+        source = (backend_root / relative_path).read_text(encoding="utf-8")
         assert "print(" not in source
         assert "[DIAGNOSTIC]" not in source
 
@@ -2199,7 +2465,8 @@ def test_finalized_report_is_written_privately_with_sanitized_metadata(monkeypat
     written = list(tmp_path.iterdir())
     assert len(written) == 1
     assert written[0].suffix == ".pdf"
-    assert written[0].stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert written[0].stat().st_mode & 0o777 == 0o600
     saved = LabRequestRepository.save_finalized_report.await_args.kwargs
     assert saved["expected_storage_key"] is None
     assert saved["file_name"] == "unsafe_script_ report.pdf"

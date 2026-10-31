@@ -20,7 +20,8 @@ export default function RoleProtectedRoute({ children, allowedRoles }) {
       patient: '/patient/dashboard',
       doctor: '/doctor/dashboard',
       admin: '/admin/dashboard',
-      receptionist: '/reception/dashboard'
+      receptionist: '/reception/dashboard',
+      laboratorian: '/laboratory/dashboard',
     };
     return <Navigate to={fallbacks[user.role] || '/login'} replace />;
   }

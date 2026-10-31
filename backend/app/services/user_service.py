@@ -12,10 +12,25 @@ from app.schemas.patient import (
     ReceptionPatientUpdate,
 )
 from app.schemas.lab_request import LaboratorianSummary
+from app.schemas.auth import StaffOut
 from fastapi import HTTPException, status
 
 
 class UserService:
+
+    @staticmethod
+    async def list_staff() -> list[StaffOut]:
+        return [
+            StaffOut(
+                id=str(user.id),
+                full_name=user.full_name,
+                email=user.email,
+                role=user.role,
+                is_active=user.is_active,
+                created_at=user.created_at,
+            )
+            for user in await UserRepository.list_staff()
+        ]
 
     @staticmethod
     async def list_laboratorians() -> list[LaboratorianSummary]:

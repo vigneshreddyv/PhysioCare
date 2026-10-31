@@ -28,7 +28,7 @@ export default function RecentAppointments({ appointments, appointmentsLoading, 
       <div className="portal-dashboard-card p-4 md:p-6">
         <div className="flex justify-between items-start gap-3 mb-4">
           <h2 id="recent-appointments-heading" className="text-lg font-semibold">
-            Today's Appointments
+            Recent Appointments
           </h2>
           <Button
             variant="outline"

@@ -76,6 +76,10 @@ class AppointmentOut(BaseModel):
     status: str
     billing_status: str
     billing_amount: float
+    billing_currency: Optional[str] = None
+    payment_status: str = "not_started"
+    payment_order_id: Optional[str] = None
+    payment_id: Optional[str] = None
     cancelled_at: Optional[datetime] = None
     can_patient_cancel: bool
     cancellation_deadline: Optional[datetime] = None

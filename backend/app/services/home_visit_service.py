@@ -135,44 +135,10 @@ class HomeVisitService:
 
     @staticmethod
     async def create_request(user_id: str, schema: HomeVisitRequestCreate) -> HomeVisitRequestOut:
-        if not settings.DEMO_HOME_VISIT_REQUESTS_ENABLED:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Demo home-visit requests are disabled",
-            )
-        patient = await ProfileRepository.get_patient_by_user_id(user_id)
-        if not patient:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient profile not found")
-        entitlement = await DemoServiceRepository.get_entitlement(str(patient.id))
-        if not entitlement or not entitlement.active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Demo home-visit request access has not been granted for this patient",
-            )
-        if schema.city.casefold() != settings.DEMO_HOME_SERVICE_CITY.casefold():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Home visits are currently limited to {settings.DEMO_HOME_SERVICE_CITY} city",
-            )
-        doctor = await ProfileRepository.get_doctor_by_id(schema.preferred_doctor_id)
-        if not doctor:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preferred physiotherapist not found")
-
-        request = await DemoServiceRepository.create_request(HomeVisitRequest(
-            patient_id=patient.id,
-            preferred_doctor_id=doctor.id,
-            home_address=schema.home_address,
-            reason=schema.reason,
-            city=settings.DEMO_HOME_SERVICE_CITY,
-            body_regions=schema.body_regions,
-            symptoms=schema.symptoms,
-            duration_days=schema.duration_days,
-            pain_severity=schema.pain_severity,
-        ))
-        if schema.save_address:
-            patient.saved_home_address = schema.home_address
-            await ProfileRepository.save_patient(patient)
-        return await HomeVisitService._format_full(request)
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Legacy home-visit requests are retired. Use direct home-visit booking.",
+        )
 
     @staticmethod
     async def get_booking_availability(
@@ -328,7 +294,7 @@ class HomeVisitService:
                 submission_fingerprint=submission_fingerprint,
                 clinic_timezone=settings.CLINIC_TIMEZONE,
                 time_slot=schema.time_slot,
-                reason=schema.reason,
+                reason=schema.reason or "",
                 service_mode="home_visit",
                 home_address=schema.home_address,
                 city=settings.DEMO_HOME_SERVICE_CITY,

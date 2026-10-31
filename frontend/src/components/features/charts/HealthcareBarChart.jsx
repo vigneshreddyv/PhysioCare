@@ -27,78 +27,63 @@ const HealthcareBarChart = ({ data, label, title, unit = '', height = 250 }) => 
   };
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      {/* Chart Title */}
+    <div className="w-full min-w-0">
       {title && (
-        <text
-          x="50%"
-          y="20"
-          textAnchor="middle"
-          fill="#666"
-          fontSize={14}
-          fontWeight="600"
-        >
+        <div className="mb-1 min-w-0 truncate text-center text-sm font-semibold text-on-surface-variant" title={title}>
           {title}
-        </text>
+        </div>
       )}
-      <BarChart
-        data={data}
-        margin={{ top: 40, right: 30, left: 0, bottom: 5 }}
-      >
-        <defs>
-          <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
-            <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.2} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.5} />
-        <XAxis
-          dataKey="name"
-          tick={{ fontSize: 12, rotate: -30 }}
-          textAnchor="end"
-        />
-        <YAxis
-          tick={{
-            count: 4,
-            fontSize: 12,
-            formatter: (value) => formatValue(value)
-          }}
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart
+          data={data}
+          margin={{ top: 8, right: 12, left: 4, bottom: 22 }}
         >
-          <label
-            value={unit}
-            position="insideLeft"
-            angle={-90}
-            dy="-20"
-            dx="-10"
-            textAnchor="middle"
-            style={{ fill: '#666', fontSize: 12 }}
+          <defs>
+            <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.8} />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.2} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.5} />
+          <XAxis
+            dataKey="name"
+            interval="preserveStartEnd"
+            angle={-30}
+            textAnchor="end"
+            height={42}
+            tick={{ fontSize: 11 }}
+            tickMargin={8}
           />
-        </YAxis>
-        <Tooltip
-          formatter={(value) => formatValue(value)}
-          labelFormatter={label => label}
-          contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', padding: '8px', borderRadius: '4px' }}
-          labelStyle={{ fontSize: 12, fontWeight: 600 }}
-        />
-        <Legend verticalAlign="top" height={36} />
-        <Bar
-          dataKey={label}
-          fill="url(#barGradient)"
-          radius={[4, 4, 0, 0]}
-        >
-          {/* Value labels on top of bars */}
-          <LabelList
-            dataKey={label}
-            position="insideTop"
-            dy={12}
-            fill="#fff"
-            fontSize={12}
-            fontWeight={600}
+          <YAxis
+            tick={{ fontSize: 11 }}
+            tickFormatter={formatValue}
+            width={unit ? 52 : 36}
+          />
+          <Tooltip
             formatter={(value) => formatValue(value)}
+            labelFormatter={label => label}
+            contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', padding: '8px', borderRadius: '4px' }}
+            labelStyle={{ fontSize: 12, fontWeight: 600 }}
           />
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+          <Legend verticalAlign="top" height={28} wrapperStyle={{ fontSize: 12 }} />
+          <Bar
+            dataKey={label}
+            fill="url(#barGradient)"
+            radius={[4, 4, 0, 0]}
+            maxBarSize={48}
+          >
+            <LabelList
+              dataKey={label}
+              position="top"
+              offset={6}
+              fill="#3f484e"
+              fontSize={11}
+              formatter={(value) => formatValue(value)}
+            />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 };
 

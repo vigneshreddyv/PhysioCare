@@ -43,7 +43,7 @@ export default function Register() {
 
   if (registered) {
     return (
-      <div className="patient-login patient-register min-h-screen flex items-center justify-center p-4">
+      <div className="patient-register min-h-screen flex items-center justify-center p-4">
         <main className="patient-register__success" aria-labelledby="registration-complete-heading">
           <span className="material-symbols-outlined" aria-hidden="true">check_circle</span>
           <p className="patient-page__eyebrow">Patient account created</p>
@@ -56,21 +56,37 @@ export default function Register() {
   }
 
   return (
-    <div className="patient-login patient-register min-h-screen flex items-center justify-center p-4">
-      <main className="patient-login__panel patient-register__panel" aria-labelledby="register-heading">
-        <Link to="/" className="patient-register__back">
-          <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-          Back to PhysioCare
-        </Link>
-        <div className="patient-register__heading">
-          <p className="patient-page__eyebrow">Secure patient access</p>
-          <h1 id="register-heading">Create your account</h1>
-          <p>Register as a patient to use appointment booking and visit history.</p>
-        </div>
+    <div className="patient-register min-h-screen flex items-center justify-center p-4">
+      <div className="patient-register__layout">
+        <aside className="patient-register__welcome" aria-labelledby="register-welcome-heading">
+          <div className="patient-register__brand">
+            <span className="material-symbols-outlined" aria-hidden="true">medical_services</span>
+            <span>PhysioCare</span>
+          </div>
+          <p className="patient-page__eyebrow">Patient portal</p>
+          <h2 id="register-welcome-heading">Care that keeps you moving.</h2>
+          <p>Create an account to manage your physiotherapy visits in one place.</p>
+          <ul>
+            <li><span className="material-symbols-outlined" aria-hidden="true">event_available</span>Book clinic appointments</li>
+            <li><span className="material-symbols-outlined" aria-hidden="true">history</span>Keep track of your visits</li>
+            <li><span className="material-symbols-outlined" aria-hidden="true">lock</span>Access your account securely</li>
+          </ul>
+        </aside>
 
-        {submitError && <div className="patient-register__error" role="alert">{submitError}</div>}
+        <main className="patient-register__panel" aria-labelledby="register-heading">
+          <Link to="/" className="patient-register__back">
+            <span className="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+            Back to PhysioCare
+          </Link>
+          <div className="patient-register__heading">
+            <p className="patient-page__eyebrow">Secure patient access</p>
+            <h1 id="register-heading">Create your account</h1>
+            <p>Register as a patient to use appointment booking and visit history.</p>
+          </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} noValidate>
+          {submitError && <div className="patient-register__error" role="alert">{submitError}</div>}
+
+          <form onSubmit={handleSubmit(onSubmit)} noValidate>
           <label>
             <span>Full name</span>
             <input type="text" autoComplete="name" {...register('fullName')} />
@@ -100,10 +116,11 @@ export default function Register() {
           <Button variant="patientPrimary" type="submit" disabled={isSubmitting} className="w-full">
             {isSubmitting ? 'Creating account…' : 'Create patient account'}
           </Button>
-        </form>
+          </form>
 
-        <p className="patient-register__signin">Already registered? <Link to="/login" state={location.state}>Sign in</Link></p>
-      </main>
+          <p className="patient-register__signin">Already registered? <Link to="/login" state={location.state}>Sign in</Link></p>
+        </main>
+      </div>
     </div>
   );
 }

@@ -75,11 +75,136 @@ class AppointmentRepository:
         patient_id: str,
         cancelled_at: datetime,
     ) -> bool:
-        result = await Appointment.get_pymongo_collection().update_one(
+        return await AppointmentRepository._cancel_scheduled(
+            appointment_id, cancelled_at, patient_id=patient_id
+        )
+
+    @staticmethod
+    async def cancel_scheduled(
+        appointment_id: str,
+        cancelled_at: datetime,
+    ) -> bool:
+        return await AppointmentRepository._cancel_scheduled(appointment_id, cancelled_at)
+
+    @staticmethod
+    async def _cancel_scheduled(
+        appointment_id: str,
+        cancelled_at: datetime,
+        patient_id: str | None = None,
+    ) -> bool:
+        """Atomically cancel while preserving a verified capture for reconciliation.
+
+        The paid and unpaid branches race safely with payment finalization because
+        both transitions condition on the appointment still being scheduled.
+        """
+        try:
+            appointment_object_id = PydanticObjectId(appointment_id)
+            patient_object_id = PydanticObjectId(patient_id) if patient_id else None
+        except (ValueError, TypeError):
+            return False
+
+        collection = Appointment.get_pymongo_collection()
+        base_filter = {"_id": appointment_object_id, "status": "scheduled"}
+        if patient_object_id is not None:
+            base_filter["patient_id"] = patient_object_id
+
+        paid_filter = {
+            **base_filter,
+            "billing_status": "paid",
+            "payment_status": "success",
+        }
+        result = await collection.update_one(
+            paid_filter,
             {
-                "_id": PydanticObjectId(appointment_id),
-                "patient_id": PydanticObjectId(patient_id),
-                "status": "scheduled",
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_at": cancelled_at,
+                    "payment_status": "reconciliation_required",
+                },
+                "$unset": {"slot_claim": ""},
+            },
+        )
+        if result.modified_count == 1:
+            return True
+
+        legacy_paid_filter = {
+            **base_filter,
+            "billing_status": "paid",
+            "payment_status": {"$ne": "success"},
+        }
+        result = await collection.update_one(
+            legacy_paid_filter,
+            {
+                "$set": {"status": "cancelled", "cancelled_at": cancelled_at},
+                "$unset": {"slot_claim": ""},
+            },
+        )
+        if result.modified_count == 1:
+            return True
+
+        unpaid_filter = {**base_filter, "billing_status": {"$ne": "paid"}}
+        result = await collection.update_one(
+            unpaid_filter,
+            {
+                "$set": {"status": "cancelled", "cancelled_at": cancelled_at},
+                "$unset": {"slot_claim": ""},
+            },
+        )
+        return result.modified_count == 1
+
+    @staticmethod
+    async def cancel_from_status(
+        appointment_id: str,
+        expected_status: str,
+        cancelled_at: datetime,
+    ) -> bool:
+        """Admin status-edit cancellation, guarded against stale model saves."""
+        if expected_status == "scheduled":
+            return await AppointmentRepository.cancel_scheduled(appointment_id, cancelled_at)
+        try:
+            object_id = PydanticObjectId(appointment_id)
+        except (ValueError, TypeError):
+            return False
+        collection = Appointment.get_pymongo_collection()
+        captured_filter = {
+            "_id": object_id,
+            "status": expected_status,
+            "billing_status": "paid",
+            "payment_status": "success",
+        }
+        result = await collection.update_one(
+            captured_filter,
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_at": cancelled_at,
+                    "payment_status": "reconciliation_required",
+                },
+                "$unset": {"slot_claim": ""},
+            },
+        )
+        if result.modified_count == 1:
+            return True
+        legacy_paid_filter = {
+            "_id": object_id,
+            "status": expected_status,
+            "billing_status": "paid",
+            "payment_status": {"$ne": "success"},
+        }
+        result = await collection.update_one(
+            legacy_paid_filter,
+            {
+                "$set": {"status": "cancelled", "cancelled_at": cancelled_at},
+                "$unset": {"slot_claim": ""},
+            },
+        )
+        if result.modified_count == 1:
+            return True
+        result = await collection.update_one(
+            {
+                "_id": object_id,
+                "status": expected_status,
+                "billing_status": {"$ne": "paid"},
             },
             {
                 "$set": {"status": "cancelled", "cancelled_at": cancelled_at},
@@ -89,18 +214,32 @@ class AppointmentRepository:
         return result.modified_count == 1
 
     @staticmethod
-    async def cancel_scheduled(
+    async def mark_cancelled_capture_for_reconciliation(
         appointment_id: str,
-        cancelled_at: datetime,
+        order_id: str,
+        payment_id: str,
+        currency: str,
     ) -> bool:
+        try:
+            object_id = PydanticObjectId(appointment_id)
+        except (ValueError, TypeError):
+            return False
         result = await Appointment.get_pymongo_collection().update_one(
             {
-                "_id": PydanticObjectId(appointment_id),
-                "status": "scheduled",
+                "_id": object_id,
+                "status": "cancelled",
+                "$or": [
+                    {"payment_order_id": order_id},
+                    {"payment_order_id": None},
+                ],
             },
             {
-                "$set": {"status": "cancelled", "cancelled_at": cancelled_at},
-                "$unset": {"slot_claim": ""},
+                "$set": {
+                    "payment_status": "reconciliation_required",
+                    "payment_order_id": order_id,
+                    "payment_id": payment_id,
+                    "billing_currency": currency,
+                }
             },
         )
         return result.modified_count == 1

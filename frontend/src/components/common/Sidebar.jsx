@@ -11,13 +11,20 @@ export default function Sidebar({ className = '', onNavigate, onClose }) {
     admin: [
       { path: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard' },
       { path: '/admin/patients', label: 'Patients', icon: 'groups' },
+      { path: '/admin/care-management', label: 'Care management', icon: 'clinical_notes' },
+      { path: '/admin/reports/new', label: 'Clinical reports', icon: 'description' },
       { path: '/admin/doctors', label: 'Doctors', icon: 'medical_services' },
+      { path: '/admin/staff', label: 'Staff Management', icon: 'manage_accounts' },
+      { path: '/admin/laboratory', label: 'Laboratory Requests', icon: 'biotech' },
       { path: '/admin/demo-services', label: 'Demo services', icon: 'science' },
       { path: '/admin/analytics', label: 'Analytics', icon: 'analytics' },
+      { path: '/admin/notifications', label: 'Notifications', icon: 'notifications' },
     ],
     doctor: [
       { path: '/doctor/dashboard', label: 'Dashboard', icon: 'dashboard' },
       { path: '/doctor/patients', label: 'Patients', icon: 'groups' },
+      { path: '/doctor/care-management', label: 'Care management', icon: 'clinical_notes' },
+      { path: '/doctor/reports/new', label: 'Clinical reports', icon: 'description' },
       { path: '/doctor/home-visits', label: 'Home Visits', icon: 'home_health' },
     ],
     receptionist: [

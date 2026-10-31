@@ -10,7 +10,7 @@ from app.schemas.patient import (
     ReceptionPatientUpdate,
 )
 from app.services.user_service import UserService
-from app.schemas.auth import StaffCreate
+from app.schemas.auth import StaffCreate, StaffOut
 from app.schemas.lab_request import LaboratorianSummary
 from app.schemas.doctor_history import DoctorPatientHistoryOut
 from app.services.auth_service import AuthService
@@ -42,6 +42,13 @@ async def create_staff(
         "email": user.email,
         "role": user.role,
     }
+
+
+@router.get("/staff", response_model=List[StaffOut])
+async def list_staff(
+    current_user = Depends(RoleChecker(["admin"])),
+):
+    return await UserService.list_staff()
 
 
 @router.get("/laboratorians", response_model=List[LaboratorianSummary])

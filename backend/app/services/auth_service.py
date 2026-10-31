@@ -4,6 +4,7 @@ import secrets
 
 from beanie import PydanticObjectId
 from fastapi import HTTPException, status
+from pymongo.errors import DuplicateKeyError
 
 from app.core.security import (
     get_password_hash,
@@ -15,6 +16,7 @@ from app.core.security import (
     hash_session_secret,
 )
 from app.core.config import settings
+from app.core.lab_demo import LAB_DEMO_REHEARSAL_TAG
 
 from app.models.user import User
 from app.models.patient import Patient
@@ -39,25 +41,54 @@ class SessionBundle:
 class AuthService:
 
     @staticmethod
-    async def register(schema: UserRegister) -> User:
+    async def register(
+        schema: UserRegister,
+        *,
+        demo_rehearsal_tag: str | None = None,
+    ) -> User:
+        AuthService._validate_demo_tag(demo_rehearsal_tag)
         return await AuthService._create_user(
             email=schema.email,
             password=schema.password,
             full_name=schema.full_name,
             role="patient",
+            demo_rehearsal_tag=demo_rehearsal_tag,
         )
 
     @staticmethod
-    async def register_staff(schema: StaffCreate) -> User:
+    async def register_staff(
+        schema: StaffCreate,
+        *,
+        demo_rehearsal_tag: str | None = None,
+    ) -> User:
+        tag = demo_rehearsal_tag or schema.demo_rehearsal_tag
+        AuthService._validate_demo_tag(tag)
         return await AuthService._create_user(
             email=schema.email,
             password=schema.password,
             full_name=schema.full_name,
             role=schema.role,
+            demo_rehearsal_tag=tag,
         )
 
     @staticmethod
-    async def _create_user(email: str, password: str, full_name: str, role: str) -> User:
+    def _validate_demo_tag(tag: str | None) -> None:
+        if tag is not None and (
+            not settings.LAB_DEMO_MODE or tag != LAB_DEMO_REHEARSAL_TAG
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Demo tagging is available only in the isolated laboratory demo",
+            )
+
+    @staticmethod
+    async def _create_user(
+        email: str,
+        password: str,
+        full_name: str,
+        role: str,
+        demo_rehearsal_tag: str | None = None,
+    ) -> User:
 
         existing = await UserRepository.get_by_email(email)
 
@@ -74,14 +105,22 @@ class AuthService:
             hashed_password=hashed,
             role=role,
             full_name=full_name,
+            demo_rehearsal_tag=demo_rehearsal_tag,
         )
 
-        saved_user = await UserRepository.create(user)
+        try:
+            saved_user = await UserRepository.create(user)
+        except DuplicateKeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            ) from exc
 
         if role == "patient":
 
             patient = Patient(
                 user_id=saved_user.id,
+                demo_rehearsal_tag=demo_rehearsal_tag,
             )
 
             await ProfileRepository.create_patient(patient)
@@ -115,6 +154,7 @@ class AuthService:
                 user_id=user.id,
                 refresh_token_hash="pending",
                 csrf_token_hash="pending",
+                demo_rehearsal_tag=getattr(user, "demo_rehearsal_tag", None),
                 expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
                 created_at=now,
                 rotated_at=now,

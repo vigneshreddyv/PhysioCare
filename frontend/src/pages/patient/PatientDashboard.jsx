@@ -147,8 +147,14 @@ export default function PatientDashboard() {
               <span className="patient-home-focus__icon"><PatientIcon name="calendar" size={24} /></span>
               <div><h3>{format(parseISO(nextAppointment.appointment_date), 'EEEE, MMMM d')}</h3><p>{nextAppointment.time_slot} IST with Dr. {nextAppointment.doctor_name}</p></div>
             </div>
+            <p className="patient-home-focus__payment">
+              Payment: {nextAppointment.payment_status === 'reconciliation_required' ? 'Captured; clinic reconciliation required' : nextAppointment.billing_status === 'paid' ? 'Paid' : `${nextAppointment.payment_status === 'failed' ? 'Failed' : nextAppointment.payment_status === 'abandoned' ? 'Checkout abandoned' : nextAppointment.payment_status === 'cancelled' ? 'Checkout cancelled' : 'Pending'} - ${nextAppointment.billing_currency ? `INR ${Number(nextAppointment.billing_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'currency not configured'}`}
+            </p>
             <div className="patient-home-focus__actions">
               <Link to="/patient/history">View details <PatientIcon name="arrow" size={18} /></Link>
+              {nextAppointment.status === 'scheduled' && nextAppointment.service_mode === 'clinic' && nextAppointment.billing_status !== 'paid' && (
+                <Link to={`/patient/book?paymentAppointmentId=${nextAppointment.id}`}>Continue to payment</Link>
+              )}
               {nextAppointment.status === 'scheduled' && nextAppointment.can_patient_cancel && (
                 <button type="button" onClick={() => openCancellation(nextAppointment)}>Cancel appointment</button>
               )}

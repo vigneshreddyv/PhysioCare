@@ -1,6 +1,6 @@
 from datetime import datetime
 from beanie import Document, PydanticObjectId, Indexed
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pymongo import ASCENDING, IndexModel
 from typing import Optional
 
@@ -43,6 +43,11 @@ class Appointment(Document):
 
     symptoms: list[str] = Field(default_factory=list)
 
+    @field_validator("symptoms", mode="before")
+    @classmethod
+    def normalize_null_symptoms(cls, value):
+        return [] if value is None else value
+
     duration_days: Optional[int] = None
 
     pain_severity: Optional[str] = None
@@ -56,6 +61,14 @@ class Appointment(Document):
     billing_status: str = "pending"
 
     billing_amount: float = 120.0
+
+    billing_currency: Optional[str] = None
+
+    payment_status: str = "not_started"
+
+    payment_order_id: Optional[str] = None
+
+    payment_id: Optional[str] = None
 
     cancelled_at: Optional[datetime] = None
 
