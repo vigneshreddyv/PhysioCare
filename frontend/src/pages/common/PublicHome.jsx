@@ -366,7 +366,7 @@ export default function PublicHome() {
             <details><summary>Are the displayed hours final clinic hours?<span aria-hidden="true">+</span></summary><p>Administrator-published clinician schedules are shown when configured. Unconfigured clinicians continue using clearly labelled demonstration availability until the clinic confirms their days, hours, breaks, and leave.</p></details>
             <details><summary>Can I cancel a clinic appointment online?<span aria-hidden="true">+</span></summary><p>Yes, until exactly 24 hours before the appointment. Inside that window, contact the clinic. The demo applies no automatic cancellation fee.</p></details>
             <details><summary>When is a home visit confirmed?<span aria-hidden="true">+</span></summary><p>For an entitled patient, the final booking action confirms the selected available slot. Demo hours still require clinic configuration before launch, and no payment is collected.</p></details>
-            <details><summary>Can I pay in PhysioCare?<span aria-hidden="true">+</span></summary><p>No payment provider is configured. Any recorded billing information is operational data, not a live payment transaction.</p></details>
+            <details><summary>Can I pay in PhysioCare?<span aria-hidden="true">+</span></summary><p>Razorpay Test Mode checkout is implemented but is available only when the clinic enables an authorized test merchant configuration. Live payments and production charges are not enabled.</p></details>
           </div>
         </section>
 

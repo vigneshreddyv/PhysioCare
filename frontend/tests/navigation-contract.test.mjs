@@ -676,10 +676,11 @@ test('patient home benchmark keeps one truthful next action and compact service 
 
 
 test('patient booking keeps service, date, time, review, and verified Test Mode payment steps', async () => {
-  const [bookingSource, homeVisitSource, clinicDateSource] = await Promise.all([
+  const [bookingSource, homeVisitSource, clinicDateSource, publicHomeSource] = await Promise.all([
     source('src/pages/patient/BookAppointment.jsx'),
     source('src/pages/patient/HomeVisitRequests.jsx'),
     source('src/utils/clinicDate.js'),
+    source('src/pages/common/PublicHome.jsx'),
   ]);
 
   assert.match(bookingSource, /Book an appointment/);
@@ -702,6 +703,9 @@ test('patient booking keeps service, date, time, review, and verified Test Mode 
   assert.ok(paymentReadinessRequest >= 0 && paymentReadinessRequest < unavailablePaymentGuard);
   assert.ok(unavailablePaymentGuard < appointmentCreationRequest);
   assert.match(bookingSource, /Razorpay Test Mode/);
+  assert.match(publicHomeSource, /Razorpay Test Mode checkout is implemented/);
+  assert.match(publicHomeSource, /Live payments and production charges are not enabled/);
+  assert.doesNotMatch(publicHomeSource, /No payment provider is configured/);
   assert.match(bookingSource, /api\.post\(`\/appointments\/\$\{confirmedAppointment\.id\}\/payments\/order`\)/);
   assert.match(bookingSource, /payments\/verify/);
   assert.match(bookingSource, /paymentAppointmentId/);
