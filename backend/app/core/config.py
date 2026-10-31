@@ -88,6 +88,12 @@ class Settings(BaseSettings):
     PAYMENT_RECONCILIATION_LEASE_SECONDS: int = Field(default=120, ge=15, le=3600)
     LAB_REPORT_STORAGE_DIR: str = "uploads/lab-reports"
     LAB_REPORT_MAX_BYTES: int = Field(default=5 * 1024 * 1024, ge=1024, le=20 * 1024 * 1024)
+    CLINICAL_REPORT_STORAGE_DIR: str = "uploads/clinical-reports"
+    CLINICAL_REPORT_MAX_BYTES: int = Field(
+        default=5 * 1024 * 1024,
+        ge=1024,
+        le=20 * 1024 * 1024,
+    )
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

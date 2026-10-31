@@ -1,4 +1,3 @@
-import os
 import json
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse
@@ -8,11 +7,25 @@ from app.middleware.auth import get_current_user, RoleChecker
 from app.schemas.report import ReportResponse, ReportCreate, ReportContentSchema
 from app.services.report_service import ReportService
 from app.services.clinical_authorization import require_doctor_patient_access
+from app.services.clinical_report_storage import ClinicalReportStorage
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "reports")
-os.makedirs(REPORTS_DIR, exist_ok=True)
+
+def report_response(report) -> ReportResponse:
+    return ReportResponse(
+        id=str(report.id),
+        patient_id=str(report.patient_id),
+        booking_id=str(report.booking_id) if report.booking_id else None,
+        title=report.title,
+        category=report.category,
+        date=report.date,
+        description=report.description,
+        therapist=report.therapist,
+        content=ReportContentSchema(**report.content),
+        has_file=bool(report.file_path),
+        created_at=report.created_at,
+    )
 
 @router.get("", response_model=List[ReportResponse])
 async def list_reports(
@@ -27,21 +40,7 @@ async def list_reports(
             detail="Patient profile not found"
         )
     reports = await ReportService.get_reports_by_patient_id(str(patient.id))
-    return [
-        ReportResponse(
-            id=str(r.id),
-            patient_id=str(r.patient_id),
-            booking_id=str(r.booking_id) if r.booking_id else None,
-            title=r.title,
-            category=r.category,
-            date=r.date,
-            description=r.description,
-            therapist=r.therapist,
-            content=ReportContentSchema(**r.content),
-            file_path=r.file_path,
-            created_at=r.created_at
-        ) for r in reports
-    ]
+    return [report_response(report) for report in reports]
 
 @router.get("/{report_id}", response_model=ReportResponse)
 async def get_report_details(
@@ -62,19 +61,7 @@ async def get_report_details(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found or access denied"
         )
-    return ReportResponse(
-        id=str(report.id),
-        patient_id=str(report.patient_id),
-        booking_id=str(report.booking_id) if report.booking_id else None,
-        title=report.title,
-        category=report.category,
-        date=report.date,
-        description=report.description,
-        therapist=report.therapist,
-        content=ReportContentSchema(**report.content),
-        file_path=report.file_path,
-        created_at=report.created_at
-    )
+    return report_response(report)
 
 @router.get("/{report_id}/download")
 async def download_report_file(
@@ -95,15 +82,22 @@ async def download_report_file(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report file not found or access denied"
         )
-    if not os.path.exists(report.file_path):
+    try:
+        storage_path = ClinicalReportStorage.resolve(report.file_path)
+    except (OSError, RuntimeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Physical report file not found on disk"
+            detail="Report file not found or access denied",
+        ) from None
+    if not storage_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report file not found or access denied",
         )
     return FileResponse(
-        path=report.file_path,
+        path=storage_path,
         media_type="application/pdf",
-        filename=os.path.basename(report.file_path)
+        filename="clinical-report.pdf",
     )
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
@@ -116,11 +110,11 @@ async def create_report_by_admin(
     try:
         report_dict = json.loads(report_data_str)
         report_create = ReportCreate(**report_dict)
-    except Exception as e:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid JSON data payload: {e}"
-        )
+            detail="Invalid report data payload",
+        ) from None
 
     if current_user.role == "doctor":
         try:
@@ -136,47 +130,24 @@ async def create_report_by_admin(
                 detail="Patient not found",
             ) from exc
 
-    file_path = None
+    storage_key = None
     if file:
-        if not file.filename.lower().endswith(".pdf"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only PDF attachments are allowed"
-            )
-        filename = f"rpt_{os.urandom(8).hex()}.pdf"
-        file_path = os.path.join(REPORTS_DIR, filename)
-        try:
-            with open(file_path, "wb") as f:
-                content = await file.read()
-                f.write(content)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to write file to storage: {e}"
-            )
+        storage_key = await ClinicalReportStorage.store_pdf(file)
 
-    report = await ReportService.create_report(
-        patient_id=report_create.patient_id,
-        booking_id=report_create.booking_id,
-        title=report_create.title,
-        category=report_create.category,
-        date=report_create.date,
-        description=report_create.description,
-        therapist=report_create.therapist,
-        content=report_create.content.model_dump(),
-        file_path=file_path
-    )
+    try:
+        report = await ReportService.create_report(
+            patient_id=report_create.patient_id,
+            booking_id=report_create.booking_id,
+            title=report_create.title,
+            category=report_create.category,
+            date=report_create.date,
+            description=report_create.description,
+            therapist=report_create.therapist,
+            content=report_create.content.model_dump(),
+            file_path=storage_key,
+        )
+    except Exception:
+        ClinicalReportStorage.delete(storage_key)
+        raise
 
-    return ReportResponse(
-        id=str(report.id),
-        patient_id=str(report.patient_id),
-        booking_id=str(report.booking_id) if report.booking_id else None,
-        title=report.title,
-        category=report.category,
-        date=report.date,
-        description=report.description,
-        therapist=report.therapist,
-        content=ReportContentSchema(**report.content),
-        file_path=report.file_path,
-        created_at=report.created_at
-    )
+    return report_response(report)

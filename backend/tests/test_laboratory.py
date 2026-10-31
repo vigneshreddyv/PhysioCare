@@ -9,10 +9,40 @@ from app.models.laboratory_test import LaboratoryTest
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
 from app.services.laboratory_service import LaboratoryService
 from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
+from app.api.laboratory import update_laboratory_booking_status
+from app.schemas.laboratory_booking import LaboratoryBookingStatusUpdate
 
 
 # Override the database name for testing
 settings.DATABASE_NAME = "test_physiocare"
+
+
+@pytest.mark.asyncio
+async def test_unassigned_doctor_cannot_update_laboratory_booking_status(
+    monkeypatch,
+):
+    booking = MagicMock()
+    booking.patient_id = "000000000000000000000000"
+    monkeypatch.setattr(
+        "app.api.laboratory.LaboratoryBookingRepository.get_by_id",
+        AsyncMock(return_value=booking),
+    )
+    monkeypatch.setattr(
+        "app.api.laboratory.require_doctor_patient_access",
+        AsyncMock(side_effect=PermissionError("not assigned")),
+    )
+    update = AsyncMock()
+    monkeypatch.setattr(LaboratoryService, "update_booking_status", update)
+
+    with pytest.raises(HTTPException) as error:
+        await update_laboratory_booking_status(
+            "booking-id",
+            LaboratoryBookingStatusUpdate(status="completed"),
+            MagicMock(role="doctor", id="doctor-user-id"),
+        )
+
+    assert error.value.status_code == 403
+    update.assert_not_awaited()
 
 
 def test_laboratory_test_creation():

@@ -19,7 +19,7 @@ class ReportResponse(BaseModel):
     description: str
     therapist: str
     content: ReportContentSchema
-    file_path: Optional[str] = None
+    has_file: bool = False
     created_at: datetime
 
 

@@ -46,7 +46,7 @@ export default function PatientReports() {
         description: r.description,
         therapist: r.therapist,
         content: r.content,
-        file_path: r.file_path
+        hasFile: r.has_file
       }));
     }
     return [];
@@ -232,7 +232,7 @@ export default function PatientReports() {
 
             {/* Modal Actions */}
             <div className="flex justify-end gap-3 pt-2">
-              {previewReport.file_path && (
+              {previewReport.hasFile && (
                 <Button
                   onClick={() => handleDownload(previewReport)}
                   className="text-xs py-2 px-4 bg-[#0F6B63] hover:bg-[#0F6B63]/90 text-white rounded-xl"

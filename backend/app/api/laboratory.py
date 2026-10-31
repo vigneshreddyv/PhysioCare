@@ -11,6 +11,8 @@ from app.schemas.laboratory_booking import (
 )
 from app.services.laboratory_service import LaboratoryService
 from app.models.laboratory_test import LaboratoryTest
+from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
+from app.services.clinical_authorization import require_doctor_patient_access
 
 
 router = APIRouter(prefix="/laboratory", tags=["laboratory"])
@@ -255,6 +257,24 @@ async def update_laboratory_booking_status(
     Update the physical status of a laboratory booking.
     Restricted to admin and doctor roles.
     """
+    if current_user.role == "doctor":
+        booking = await LaboratoryBookingRepository.get_by_id(booking_id)
+        if not booking:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Booking not found",
+            )
+        try:
+            await require_doctor_patient_access(
+                str(current_user.id),
+                str(booking.patient_id),
+            )
+        except PermissionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Doctor is not authorized to update this booking",
+            ) from exc
+
     try:
         updated_booking = await LaboratoryService.update_booking_status(
             booking_id=booking_id,
