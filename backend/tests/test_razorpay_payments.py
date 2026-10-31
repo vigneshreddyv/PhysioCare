@@ -103,6 +103,20 @@ def captured_payment():
     }
 
 
+def captured_webhook_body():
+    return json.dumps({
+        "event": "payment.captured",
+        "payload": {
+            "payment": {
+                "entity": {
+                    "id": "pay_test_1",
+                    "order_id": "order_test_1",
+                }
+            }
+        },
+    }).encode()
+
+
 def test_payment_indexes_have_distinct_names_and_reconciliation_keys():
     indexes = [
         *PaymentAttempt.Settings.indexes,
@@ -923,6 +937,144 @@ async def test_processed_webhook_event_is_idempotent(monkeypatch):
 
     assert result == {"status": "duplicate"}
     attempt_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_ledger_lookup_failure_returns_retryable_response(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "find_one",
+        AsyncMock(side_effect=RuntimeError("database details")),
+    )
+    attempt_lookup = AsyncMock()
+    monkeypatch.setattr(PaymentAttempt, "find_one", attempt_lookup)
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(
+            captured_webhook_body(),
+            "signature",
+            "evt_ledger_unavailable",
+        )
+
+    assert error.value.status_code == 503
+    assert "database details" not in error.value.detail
+    attempt_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_ledger_insert_failure_returns_retryable_response(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "get_pymongo_collection",
+        MagicMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "find_one",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "insert",
+        AsyncMock(side_effect=RuntimeError("database details")),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(
+            captured_webhook_body(),
+            "signature",
+            "evt_insert_unavailable",
+        )
+
+    assert error.value.status_code == 503
+    assert "database details" not in error.value.detail
+
+
+@pytest.mark.asyncio
+async def test_webhook_missing_local_order_is_retryable(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "get_pymongo_collection",
+        MagicMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "find_one",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(RazorpayWebhookEvent, "insert", AsyncMock())
+    webhook_save = AsyncMock()
+    monkeypatch.setattr(RazorpayWebhookEvent, "save", webhook_save)
+    monkeypatch.setattr(PaymentAttempt, "find_one", AsyncMock(return_value=None))
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(
+            captured_webhook_body(),
+            "signature",
+            "evt_order_not_visible_yet",
+        )
+
+    assert error.value.status_code == 503
+    webhook_save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_processed_marker_failure_requests_provider_retry(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "get_pymongo_collection",
+        MagicMock(return_value=MagicMock()),
+    )
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "find_one",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(RazorpayWebhookEvent, "insert", AsyncMock())
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "save",
+        AsyncMock(side_effect=RuntimeError("database details")),
+    )
+    monkeypatch.setattr(
+        PaymentAttempt,
+        "find_one",
+        AsyncMock(return_value=payment_attempt()),
+    )
+    monkeypatch.setattr(
+        PaymentService,
+        "_verify_provider_payment",
+        AsyncMock(return_value=captured_payment()),
+    )
+    apply_payment = AsyncMock(return_value="success")
+    monkeypatch.setattr(PaymentService, "_apply_provider_payment", apply_payment)
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(
+            captured_webhook_body(),
+            "signature",
+            "evt_marker_unavailable",
+        )
+
+    assert error.value.status_code == 503
+    assert "database details" not in error.value.detail
+    apply_payment.assert_awaited_once()
 
 
 @pytest.mark.asyncio

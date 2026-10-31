@@ -676,7 +676,12 @@ class PaymentService:
         entity = event.get("payload", {}).get("payment", {}).get("entity", {})
         order_id = entity.get("order_id")
         payment_id = entity.get("id")
-        webhook_event = await RazorpayWebhookEvent.find_one({"event_id": event_id})
+        try:
+            webhook_event = await RazorpayWebhookEvent.find_one(
+                {"event_id": event_id}
+            )
+        except Exception as exc:
+            raise PaymentService._webhook_retryable_error() from exc
         if webhook_event and webhook_event.status == "processed":
             return {"status": "duplicate"}
         if not webhook_event:
@@ -684,24 +689,54 @@ class PaymentService:
             try:
                 await webhook_event.insert()
             except DuplicateKeyError:
-                webhook_event = await RazorpayWebhookEvent.find_one({"event_id": event_id})
+                try:
+                    webhook_event = await RazorpayWebhookEvent.find_one(
+                        {"event_id": event_id}
+                    )
+                except Exception as exc:
+                    raise PaymentService._webhook_retryable_error() from exc
                 if webhook_event and webhook_event.status == "processed":
                     return {"status": "duplicate"}
+                if not webhook_event:
+                    raise PaymentService._webhook_retryable_error()
+            except Exception as exc:
+                raise PaymentService._webhook_retryable_error() from exc
 
         if event.get("event") not in {"payment.captured", "payment.failed"}:
             webhook_event.status = "processed"
             webhook_event.processed_at = datetime.now(timezone.utc)
-            await webhook_event.save()
+            try:
+                await webhook_event.save()
+            except Exception as exc:
+                raise PaymentService._webhook_retryable_error() from exc
             return {"status": "ignored"}
         if not order_id or not payment_id:
             raise HTTPException(status_code=400, detail="Payment event is missing provider identifiers")
 
-        attempt = await PaymentAttempt.find_one({"provider_order_id": order_id})
+        try:
+            attempt = await PaymentAttempt.find_one(
+                {"provider_order_id": order_id}
+            )
+        except Exception as exc:
+            raise PaymentService._webhook_retryable_error() from exc
         if not attempt:
-            raise HTTPException(status_code=404, detail="Payment order not found")
+            # The provider can deliver immediately after order creation while
+            # the local order write is still completing. A retryable response
+            # prevents a valid event from being acknowledged and lost.
+            raise PaymentService._webhook_retryable_error()
         payment = await PaymentService._verify_provider_payment(order_id, payment_id)
         result = await PaymentService._apply_provider_payment(attempt, payment, event_id=event_id)
         webhook_event.status = "processed"
         webhook_event.processed_at = datetime.now(timezone.utc)
-        await webhook_event.save()
+        try:
+            await webhook_event.save()
+        except Exception as exc:
+            raise PaymentService._webhook_retryable_error() from exc
         return {"status": result}
+
+    @staticmethod
+    def _webhook_retryable_error() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook processing is temporarily unavailable",
+        )
