@@ -1,7 +1,11 @@
 from datetime import datetime
 from typing import List, Optional, Literal
+
 from beanie import Document, PydanticObjectId
 from pydantic import Field
+
+from app.core.time import utc_now
+
 
 class Exercise(Document):
     title: str
@@ -17,8 +21,8 @@ class Exercise(Document):
     equipment: List[str] = []
     video_url: Optional[str] = None
     active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "exercises"
@@ -35,8 +39,8 @@ class ExerciseAssignment(Document):
     frequency: str
     status: Literal["assigned", "in_progress", "completed", "cancelled"] = "assigned"
     assigned_by: PydanticObjectId
-    assigned_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    assigned_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "exercise_assignments"
@@ -48,13 +52,13 @@ class ExerciseProgress(Document):
     exercise_id: PydanticObjectId
     care_plan_id: PydanticObjectId
     stage_id: str
-    completed_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime = Field(default_factory=utc_now)
     completed_sets: int
     completed_reps: int
     duration_seconds: int
     completion_status: Literal["completed", "partial"] = "completed"
     notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "exercise_progress"

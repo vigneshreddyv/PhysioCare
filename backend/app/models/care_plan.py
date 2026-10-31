@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import List, Optional, Literal
+
 from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field
+
+from app.core.time import utc_now
 
 
 class Stage(BaseModel):
@@ -44,8 +47,8 @@ class CarePlan(Document):
     start_date: datetime
     target_date: datetime
     status: Literal["active", "completed", "paused", "cancelled"] = "active"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "care_plans"
@@ -58,7 +61,7 @@ class CarePlanHistory(Document):
     action: str
     previous_value: Optional[str] = None
     new_value: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "care_plan_histories"

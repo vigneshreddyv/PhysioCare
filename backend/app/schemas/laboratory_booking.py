@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
 from datetime import datetime
+from typing import List, Optional, Literal
+
+from pydantic import BaseModel, Field
 
 
 class EmbeddedTestBase(BaseModel):
@@ -11,7 +12,7 @@ class EmbeddedTestBase(BaseModel):
 
 
 class LaboratoryBookingBase(BaseModel):
-    test_ids: List[str] = Field(..., min_items=1)
+    test_ids: List[str] = Field(..., min_length=1)
     appointment_date: str  # Expected in YYYY-MM-DD format
     time_slot: str
     visit_type: str  # Must be 'home' or 'clinic'

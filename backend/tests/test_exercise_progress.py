@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from beanie import PydanticObjectId
+from app.core.time import utc_now
 from app.models.exercise import ExerciseProgress
 from app.services.exercise_service import ExerciseService
 
@@ -113,8 +114,7 @@ async def test_get_exercise_progress_stats():
     
     mock_record = MagicMock()
     # Mock date mapping check
-    from datetime import datetime
-    mock_record.completed_at = datetime.utcnow()
+    mock_record.completed_at = utc_now()
 
     with patch("app.repositories.exercise_repository.ExerciseRepository.list_assignments_by_patient", return_value=[mock_assign]), \
          patch("app.repositories.exercise_repository.ExerciseRepository.list_progress_by_patient", return_value=[mock_record]), \
@@ -221,12 +221,12 @@ async def test_longitudinal_progress_analytics():
     mock_assign_cancelled.id = PydanticObjectId("000000000000000000000002")
     mock_assign_cancelled.status = "cancelled"
 
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     p1 = MagicMock()
     p1.assignment_id = mock_assign_1.id
     p1.exercise_id = mock_ex.id
     p1.completion_status = "completed"
-    p1.completed_at = datetime.utcnow()
+    p1.completed_at = utc_now()
     p1.completed_sets = 3
     p1.completed_reps = 10
     p1.duration_seconds = 120
@@ -236,7 +236,7 @@ async def test_longitudinal_progress_analytics():
     p2.assignment_id = mock_assign_1.id
     p2.exercise_id = mock_ex.id
     p2.completion_status = "partial"
-    p2.completed_at = datetime.utcnow() - timedelta(hours=2)
+    p2.completed_at = utc_now() - timedelta(hours=2)
     p2.completed_sets = 2
     p2.completed_reps = 10
     p2.duration_seconds = 100

@@ -1,9 +1,11 @@
 import logging
 from datetime import datetime, timedelta, time
 from typing import List, Optional
+
 from beanie import PydanticObjectId
 from fastapi import HTTPException, status
 
+from app.core.time import utc_now
 from app.models.laboratory_test import LaboratoryTest
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
 from app.repositories.laboratory_test_repository import LaboratoryTestRepository
@@ -64,7 +66,7 @@ class LaboratoryService:
 
         # Normalize to start of day (00:00:00)
         appointment_date = datetime.combine(appointment_date.date(), time.min)
-        today = datetime.utcnow().date()
+        today = utc_now().date()
         today_start = datetime.combine(today, time.min)
         max_date = today_start + timedelta(days=LaboratoryService.DATE_RANGE_DAYS)
 

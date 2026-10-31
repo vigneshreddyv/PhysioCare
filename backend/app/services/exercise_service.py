@@ -1,6 +1,8 @@
-from datetime import datetime
 from typing import List, Optional, Literal
+
 from beanie import PydanticObjectId
+
+from app.core.time import utc_now
 from app.models.exercise import Exercise, ExerciseAssignment, ExerciseProgress
 from app.repositories.exercise_repository import ExerciseRepository
 from app.repositories.care_plan_repository import CarePlanRepository
@@ -181,7 +183,7 @@ class ExerciseService:
         if "status" in update_data:
             assignment.status = update_data["status"]
 
-        assignment.updated_at = datetime.utcnow()
+        assignment.updated_at = utc_now()
         await assignment.save()
         return assignment
 
@@ -269,7 +271,7 @@ class ExerciseService:
 
         # Construct weekly adherence log (Mon-Sun) of current week
         from datetime import date, timedelta
-        today = datetime.utcnow().date()
+        today = utc_now().date()
         start_of_week = today - timedelta(days=today.weekday())
         days_mapping = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         log = []

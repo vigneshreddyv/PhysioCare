@@ -1,10 +1,11 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.models.laboratory_test import LaboratoryTest
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
 from app.services.laboratory_service import LaboratoryService
@@ -83,7 +84,7 @@ def test_laboratory_booking_creation():
         "patient_id": "000000000000000000000000",  # Valid ObjectId string (24 hex chars)
         "selected_tests": embedded_tests_data,
         "visit_type": "home",
-        "appointment_date": datetime.utcnow() + timedelta(days=1),
+        "appointment_date": utc_now() + timedelta(days=1),
         "time_slot": "08:00 AM",
         "address": "Test Address",
         "billing_amount": 1050.0
@@ -133,7 +134,7 @@ async def test_validate_and_create_booking_success():
     mock_booking.payment_status = None
     mock_booking.payment_id = None
     mock_booking.payment_order_id = None
-    mock_booking.created_at = datetime.utcnow()
+    mock_booking.created_at = utc_now()
 
     with patch("app.services.laboratory_service.LaboratoryTestRepository") as mock_test_repo, \
          patch("app.services.laboratory_service.LaboratoryBookingRepository") as mock_booking_repo, \
@@ -161,7 +162,7 @@ async def test_validate_and_create_booking_success():
         booking = await LaboratoryService.validate_and_create_booking(
             patient_id="000000000000000000000000",  # Valid ObjectId string (24 hex chars)
             test_ids=["cbc", "d-dimer"],
-            appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
             time_slot="08:00 AM",
             visit_type="home",
             address="Test Address"
@@ -189,7 +190,7 @@ async def test_validate_and_create_booking_empty_test_list():
         await LaboratoryService.validate_and_create_booking(
             patient_id="000000000000000000000000",
             test_ids=[],
-            appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
             time_slot="08:00 AM",
             visit_type="home",
             address="Test Address"
@@ -203,7 +204,7 @@ async def test_validate_and_create_booking_duplicate_test_ids():
         await LaboratoryService.validate_and_create_booking(
             patient_id="000000000000000000000000",
             test_ids=["cbc", "cbc"],
-            appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
             time_slot="08:00 AM",
             visit_type="home",
             address="Test Address"
@@ -219,7 +220,7 @@ async def test_validate_and_create_booking_invalid_test_id():
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
                 test_ids=["invalid"],
-                appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+                appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
                 time_slot="08:00 AM",
                 visit_type="home",
                 address="Test Address"
@@ -232,7 +233,7 @@ async def test_validate_and_create_booking_past_date():
     mock_test = MagicMock(test_id="cbc", name="CBC", category="Hematology", sample="Blood sample", price=350.0, active=True)
     with patch("app.services.laboratory_service.LaboratoryTestRepository") as mock_test_repo:
         mock_test_repo.get_by_test_ids = AsyncMock(return_value=[mock_test])
-        past_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        past_date = (utc_now() - timedelta(days=1)).strftime("%Y-%m-%d")
         with pytest.raises(ValueError) as exc_info:
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
@@ -254,7 +255,7 @@ async def test_validate_and_create_booking_invalid_time_slot():
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
                 test_ids=["cbc"],
-                appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+                appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
                 time_slot="Invalid Slot",
                 visit_type="home",
                 address="Test Address"
@@ -271,7 +272,7 @@ async def test_validate_and_create_booking_invalid_visit_type():
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
                 test_ids=["cbc"],
-                appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+                appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
                 time_slot="08:00 AM",
                 visit_type="invalid",
                 address="Test Address"
@@ -288,7 +289,7 @@ async def test_validate_and_create_booking_home_no_address():
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
                 test_ids=["cbc"],
-                appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+                appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
                 time_slot="08:00 AM",
                 visit_type="home",
                 address=""  # Empty address
@@ -311,7 +312,7 @@ async def test_validate_and_create_booking_conflict():
             await LaboratoryService.validate_and_create_booking(
                 patient_id="patient123",
                 test_ids=["cbc"],
-                appointment_date_str=(datetime.utcnow() + timedelta(days=1)).strftime("%Y-%m-%d"),
+                appointment_date_str=(utc_now() + timedelta(days=1)).strftime("%Y-%m-%d"),
                 time_slot="08:00 AM",
                 visit_type="home",
                 address="Test Address"
@@ -324,7 +325,7 @@ def test_new_booking_defaults_to_pending_payment():
         patient_id="000000000000000000000000",
         selected_tests=[],
         visit_type="clinic",
-        appointment_date=datetime.utcnow(),
+        appointment_date=utc_now(),
         time_slot="09:00 AM",
         billing_amount=100.0
     )

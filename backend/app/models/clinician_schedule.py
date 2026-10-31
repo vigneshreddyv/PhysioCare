@@ -5,6 +5,8 @@ from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field
 from pymongo import ASCENDING, IndexModel
 
+from app.core.time import utc_now
+
 
 class ScheduleBlock(BaseModel):
     day_of_week: int
@@ -37,7 +39,7 @@ class ClinicianSchedule(Document):
     published_revision: int | None = None
     published_at: datetime | None = None
     audit_history: list[ScheduleAuditEvent] = Field(default_factory=list)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "clinician_schedules"

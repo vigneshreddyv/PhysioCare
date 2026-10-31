@@ -1,8 +1,9 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from datetime import datetime, timedelta
+from datetime import timedelta
 from beanie import PydanticObjectId
 from fastapi import HTTPException
+from app.core.time import utc_now
 from app.models.care_plan import CarePlan
 from app.services.care_plan_service import CarePlanService
 from app.repositories.care_plan_repository import CarePlanRepository
@@ -71,8 +72,8 @@ async def test_care_plan_model_creation():
         "stages": stages,
         "goals": goals,
         "recommendations": recommendations,
-        "start_date": datetime.utcnow(),
-        "target_date": datetime.utcnow() + timedelta(days=60),
+        "start_date": utc_now(),
+        "target_date": utc_now() + timedelta(days=60),
         "status": "active"
     }
 
@@ -104,8 +105,8 @@ async def test_create_care_plan_success():
             stages=[{"stage_id": "st1", "title": "st", "description": "desc", "status": "active"}],
             goals=[],
             recommendations=[],
-            start_date=datetime.utcnow(),
-            target_date=datetime.utcnow() + timedelta(days=30),
+            start_date=utc_now(),
+            target_date=utc_now() + timedelta(days=30),
             status="active"
         )
         assert res.id == "cp123"
@@ -126,8 +127,8 @@ async def test_nonexistent_patient_rejected():
                 stages=[],
                 goals=[],
                 recommendations=[],
-                start_date=datetime.utcnow(),
-                target_date=datetime.utcnow() + timedelta(days=30),
+                start_date=utc_now(),
+                target_date=utc_now() + timedelta(days=30),
                 status="active"
             )
         assert "Target patient profile not found" in str(exc_info.value)
@@ -149,8 +150,8 @@ async def test_invalid_stage_status_rejected():
                 stages=[{"stage_id": "st1", "title": "st", "description": "desc", "status": "invalid_status"}],
                 goals=[],
                 recommendations=[],
-                start_date=datetime.utcnow(),
-                target_date=datetime.utcnow() + timedelta(days=30),
+                start_date=utc_now(),
+                target_date=utc_now() + timedelta(days=30),
                 status="active"
             )
         assert "Invalid stage status" in str(exc_info.value)
@@ -172,8 +173,8 @@ async def test_invalid_care_plan_status_rejected():
                 stages=[],
                 goals=[],
                 recommendations=[],
-                start_date=datetime.utcnow(),
-                target_date=datetime.utcnow() + timedelta(days=30),
+                start_date=utc_now(),
+                target_date=utc_now() + timedelta(days=30),
                 status="invalid_status"
             )
         assert "Invalid care plan status" in str(exc_info.value)

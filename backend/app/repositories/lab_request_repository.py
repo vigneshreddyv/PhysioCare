@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from beanie import PydanticObjectId
 from pymongo.errors import DuplicateKeyError
 
+from app.core.time import utc_now
 from app.models.lab_request import LabRequest
 
 
@@ -56,7 +55,7 @@ class LabRequestRepository:
 
     @staticmethod
     async def assign_laboratorian(request_id: str, laboratorian_id: str, admin_id: str) -> bool:
-        now = datetime.utcnow()
+        now = utc_now()
         result = await LabRequest.get_pymongo_collection().update_one(
             {
                 "_id": PydanticObjectId(request_id),
@@ -92,7 +91,7 @@ class LabRequestRepository:
         content_type: str,
         size_bytes: int,
     ) -> bool:
-        now = datetime.utcnow()
+        now = utc_now()
         result = await LabRequest.get_pymongo_collection().update_one(
             {
                 "_id": PydanticObjectId(request_id),
@@ -123,7 +122,7 @@ class LabRequestRepository:
         *,
         expected_storage_key: str,
     ) -> bool:
-        now = datetime.utcnow()
+        now = utc_now()
         result = await LabRequest.get_pymongo_collection().update_one(
             {
                 "_id": PydanticObjectId(request_id),
@@ -152,7 +151,7 @@ class LabRequestRepository:
 
     @staticmethod
     async def transition(request_id: str, allowed_from: list[str], target: str, actor_id: str | None = None) -> bool:
-        now = datetime.utcnow()
+        now = utc_now()
         updates = {"status": target, "updated_at": now}
         if actor_id:
             updates.update({"reviewed_by_user_id": PydanticObjectId(actor_id), "reviewed_at": now})

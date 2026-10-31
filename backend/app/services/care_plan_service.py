@@ -1,6 +1,9 @@
-from typing import List, Optional
-from beanie import PydanticObjectId
 from datetime import datetime
+from typing import List, Optional
+
+from beanie import PydanticObjectId
+
+from app.core.time import utc_now
 from app.models.care_plan import CarePlan, Stage, Goal, Recommendation, CarePlanHistory
 from app.repositories.care_plan_repository import CarePlanRepository
 
@@ -248,7 +251,7 @@ class CarePlanService:
             if field in update_data and update_data[field] is not None:
                 setattr(care_plan, field, update_data[field])
 
-        care_plan.updated_at = datetime.utcnow()
+        care_plan.updated_at = utc_now()
         await care_plan.save()
         return care_plan
 
@@ -301,7 +304,7 @@ class CarePlanService:
                     break
 
         stage.status = new_status
-        care_plan.updated_at = datetime.utcnow()
+        care_plan.updated_at = utc_now()
         await care_plan.save()
 
         # Log history
@@ -370,7 +373,7 @@ class CarePlanService:
 
         goal.progress_value = progress_value
         goal.status = new_status
-        care_plan.updated_at = datetime.utcnow()
+        care_plan.updated_at = utc_now()
         await care_plan.save()
 
         # Log history

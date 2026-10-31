@@ -4,6 +4,8 @@ from beanie import Document, Indexed, PydanticObjectId
 from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
+from app.core.time import utc_now
+
 
 class LabRequest(Document):
     patient_id: PydanticObjectId
@@ -30,8 +32,8 @@ class LabRequest(Document):
     report_released_by_user_id: PydanticObjectId | None = None
     report_released_at: datetime | None = None
     report_publication_history: list[dict] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "lab_requests"

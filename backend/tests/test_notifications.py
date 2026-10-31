@@ -1,8 +1,8 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from datetime import datetime
 from beanie import PydanticObjectId
 
+from app.core.time import utc_now
 from app.models.notification import Notification
 from app.models.user import User
 from app.services.notification_service import NotificationService
@@ -124,7 +124,7 @@ async def test_list_notifications_api_endpoint():
     mock_notif.notification_type = "appointment"
     mock_notif.is_read = False
     mock_notif.related_entity_id = "apt_1"
-    mock_notif.created_at = datetime.utcnow()
+    mock_notif.created_at = utc_now()
 
     mock_user = MagicMock(spec=User)
     mock_user.id = PydanticObjectId("000000000000000000000000")
@@ -163,7 +163,7 @@ async def test_mark_read_api_endpoint_success():
     mock_notif.notification_type = "laboratory"
     mock_notif.is_read = True
     mock_notif.related_entity_id = "lab_1"
-    mock_notif.created_at = datetime.utcnow()
+    mock_notif.created_at = utc_now()
 
     mock_user = MagicMock(spec=User)
     mock_user.id = PydanticObjectId("000000000000000000000000")

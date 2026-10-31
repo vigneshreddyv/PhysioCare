@@ -5,6 +5,8 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
+from app.core.time import utc_now
+
 
 class AuthSession(Document):
     user_id: PydanticObjectId
@@ -14,8 +16,8 @@ class AuthSession(Document):
     revoked_at: Optional[datetime] = None
     revocation_reason: Optional[str] = None
     demo_rehearsal_tag: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    rotated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    rotated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "auth_sessions"

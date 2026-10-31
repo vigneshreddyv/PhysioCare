@@ -4,6 +4,7 @@ from typing import List, Optional
 from beanie import PydanticObjectId
 from pymongo import ReturnDocument
 
+from app.core.time import utc_now
 from app.models.appointment import Appointment
 
 
@@ -281,7 +282,7 @@ class AppointmentRepository:
 
     @staticmethod
     async def list_today() -> List[Appointment]:
-        today = datetime.utcnow().date()
+        today = utc_now().date()
 
         start_of_day = datetime.combine(today, time.min)
         end_of_day = datetime.combine(today, time.max)

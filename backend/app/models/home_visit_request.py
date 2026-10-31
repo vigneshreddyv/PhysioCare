@@ -3,6 +3,8 @@ from datetime import datetime
 from beanie import Document, Indexed, PydanticObjectId
 from pydantic import Field
 
+from app.core.time import utc_now
+
 
 class HomeVisitRequest(Document):
     patient_id: PydanticObjectId
@@ -17,8 +19,8 @@ class HomeVisitRequest(Document):
     status: Indexed(str) = "pending_clinic_confirmation"
     reviewed_by_user_id: PydanticObjectId | None = None
     reviewed_at: datetime | None = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "home_visit_requests"

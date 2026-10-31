@@ -4,12 +4,14 @@ from beanie import Document, PydanticObjectId
 from pydantic import Field
 from pymongo import ASCENDING, IndexModel
 
+from app.core.time import utc_now
+
 
 class DemoEntitlement(Document):
     patient_id: PydanticObjectId
     active: bool = True
     granted_by_user_id: PydanticObjectId
-    granted_at: datetime = Field(default_factory=datetime.utcnow)
+    granted_at: datetime = Field(default_factory=utc_now)
     revoked_at: datetime | None = None
 
     class Settings:

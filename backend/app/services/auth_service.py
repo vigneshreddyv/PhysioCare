@@ -1,11 +1,12 @@
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 import secrets
+from dataclasses import dataclass
+from datetime import timedelta
 
 from beanie import PydanticObjectId
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
+from app.core.time import utc_now
 from app.core.security import (
     get_password_hash,
     verify_password,
@@ -148,7 +149,7 @@ class AuthService:
             )
 
         session_id = PydanticObjectId()
-        now = datetime.utcnow()
+        now = utc_now()
         bundle = AuthService._create_session_bundle(user, str(session_id))
         session = AuthSession.model_construct(
             id=session_id,
@@ -178,7 +179,7 @@ class AuthService:
             csrf_token,
         )
         bundle = AuthService._create_session_bundle(user, str(session.id))
-        now = datetime.utcnow()
+        now = utc_now()
         try:
             rotated = await SessionRepository.rotate_for_refresh(
                 session_id=str(session.id),
@@ -256,7 +257,7 @@ class AuthService:
         if (
             not session
             or session.revoked_at is not None
-            or session.expires_at <= datetime.utcnow()
+            or session.expires_at <= utc_now()
             or str(session.user_id) != payload.get("sub")
         ):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
@@ -315,7 +316,7 @@ class AuthService:
             await SessionRepository.revoke_by_id(
                 session_id,
                 reason=reason,
-                now=datetime.utcnow(),
+                now=utc_now(),
             )
         except Exception as exc:
             raise AuthService._authentication_unavailable() from exc

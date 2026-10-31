@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import List, Optional
+
 from beanie import Document, PydanticObjectId
 from pydantic import Field, BaseModel
+
+from app.core.time import utc_now
 
 
 class EmbeddedTest(BaseModel):
@@ -25,7 +28,7 @@ class LaboratoryBooking(Document):
     payment_status: Optional[str] = None  # pending, success, failed
     payment_id: Optional[str] = None
     payment_order_id: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "laboratory_bookings"

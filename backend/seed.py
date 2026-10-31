@@ -1,6 +1,8 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import timedelta
+
 from app.core.security import get_password_hash
+from app.core.time import utc_now
 from app.database import init_db
 from app.models.user import User
 from app.models.patient import Patient
@@ -95,7 +97,7 @@ async def seed():
     await pat2_profile.insert()
     
     print("Seeding Appointments...")
-    today = datetime.utcnow()
+    today = utc_now()
     
     appt1 = Appointment(
         patient_id=pat1_profile.id,

@@ -9,6 +9,7 @@ from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
 from types import SimpleNamespace
 from app.api.reports import create_report_by_admin
+from app.core.time import utc_now
 from app.models.report import Report
 from app.services.report_service import ReportService
 from app.repositories.report_repository import ReportRepository
@@ -22,7 +23,7 @@ async def test_report_model_creation():
         "booking_id": "111111111111111111111111",
         "title": "Lab Fluid Diagnostic Panel",
         "category": "diagnostic",
-        "date": datetime.utcnow(),
+        "date": utc_now(),
         "description": "Diagnostic serum panel.",
         "therapist": "PhysioCare Diagnostic Labs",
         "content": {"symptoms": "Swelling", "findings": "Uric acid 5.4", "recommendations": "None"},
@@ -53,7 +54,7 @@ async def test_create_report_service():
             booking_id="111111111111111111111111",
             title="Lab Fluid Diagnostic Panel",
             category="diagnostic",
-            date=datetime.utcnow(),
+            date=utc_now(),
             description="Diagnostic panel",
             therapist="PhysioCare Labs",
             content={"symptoms": "Swelling", "findings": "Normal", "recommendations": "None"},

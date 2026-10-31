@@ -1,8 +1,8 @@
-from datetime import datetime
 from typing import List, Optional
 
 from beanie import PydanticObjectId
 
+from app.core.time import utc_now
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.appointment_repository import AppointmentRepository
@@ -263,7 +263,7 @@ class UserService:
             PatientAdminEditAudit(
                 actor_user_id=PydanticObjectId(actor_user_id),
                 changed_fields=changed_fields,
-                changed_at=datetime.utcnow(),
+                changed_at=utc_now(),
             ),
         ]
         await ProfileRepository.save_patient(patient)

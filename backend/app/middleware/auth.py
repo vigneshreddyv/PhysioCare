@@ -1,9 +1,10 @@
-from datetime import datetime
 import secrets
+from typing import List
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from typing import List
 from jose import ExpiredSignatureError, JWTError, jwt
+
+from app.core.time import utc_now
 from app.core.security import (
     ACCESS_COOKIE_NAME,
     ALGORITHM,
@@ -63,7 +64,7 @@ async def get_current_user(
     if (
         not session
         or session.revoked_at is not None
-        or session.expires_at <= datetime.utcnow()
+        or session.expires_at <= utc_now()
         or str(session.user_id) != user_id
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")

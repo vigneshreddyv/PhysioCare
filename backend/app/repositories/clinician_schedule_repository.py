@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from beanie import PydanticObjectId
 from pymongo import ReturnDocument
 
+from app.core.time import utc_now
 from app.models.clinician_schedule import ClinicianSchedule, ScheduleAuditEvent
 
 
@@ -17,7 +16,7 @@ class ClinicianScheduleRepository:
     @staticmethod
     async def save_draft(schedule: ClinicianSchedule, actor_user_id: str) -> ClinicianSchedule:
         schedule.draft_revision += 1
-        schedule.updated_at = datetime.utcnow()
+        schedule.updated_at = utc_now()
         schedule.audit_history.append(ScheduleAuditEvent(
             action="draft_saved",
             actor_user_id=PydanticObjectId(actor_user_id),
@@ -30,7 +29,7 @@ class ClinicianScheduleRepository:
 
     @staticmethod
     async def publish(schedule: ClinicianSchedule, actor_user_id: str, expected_revision: int) -> ClinicianSchedule | None:
-        now = datetime.utcnow()
+        now = utc_now()
         updated = await ClinicianSchedule.get_pymongo_collection().find_one_and_update(
             {"_id": schedule.id, "draft_revision": expected_revision},
             {

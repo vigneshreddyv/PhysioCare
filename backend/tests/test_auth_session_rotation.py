@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -8,6 +8,7 @@ from fastapi import HTTPException
 import pytest
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.core.security import (
     create_access_token,
     create_csrf_token,
@@ -44,7 +45,7 @@ def make_refresh_context():
         user_id=USER_ID,
         refresh_token_hash=hash_session_secret(refresh_token),
         csrf_token_hash=hash_session_secret(csrf_token),
-        expires_at=datetime.utcnow() + timedelta(days=1),
+        expires_at=utc_now() + timedelta(days=1),
         revoked_at=None,
     )
     return refresh_token, csrf_token, session
@@ -338,7 +339,7 @@ async def test_repository_rotation_filter_is_an_atomic_secret_claim(monkeypatch)
         "app.repositories.session_repository.AuthSession.get_pymongo_collection",
         lambda: collection,
     )
-    now = datetime.utcnow()
+    now = utc_now()
 
     await SessionRepository.rotate_for_refresh(
         session_id=str(SESSION_ID),

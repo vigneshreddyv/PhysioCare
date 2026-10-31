@@ -1,8 +1,11 @@
 from datetime import datetime
+from typing import Optional
+
 from beanie import Document, PydanticObjectId, Indexed
 from pydantic import BaseModel, Field, field_validator
 from pymongo import ASCENDING, IndexModel
-from typing import Optional
+
+from app.core.time import utc_now
 
 
 class DoctorAssignmentAudit(BaseModel):
@@ -72,7 +75,7 @@ class Appointment(Document):
 
     cancelled_at: Optional[datetime] = None
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:
         name = "appointments"

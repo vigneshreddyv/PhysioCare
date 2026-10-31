@@ -9,7 +9,6 @@ import os
 import secrets
 import sys
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -19,6 +18,8 @@ from pydantic import EmailStr, TypeAdapter
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.core.time import utc_now
 
 
 HOME_VISIT_DEMO_TAG = "home_visit_demo_fixture_v1"
@@ -214,7 +215,7 @@ async def _ensure_entitlement(patient, admin_user):
         )
     entitlement.active = True
     entitlement.granted_by_user_id = admin_user.id
-    entitlement.granted_at = datetime.utcnow()
+    entitlement.granted_at = utc_now()
     entitlement.revoked_at = None
     await entitlement.save()
 
@@ -234,7 +235,7 @@ async def _ensure_schedule(doctor, admin_user):
     schedule = await ClinicianSchedule.find_one(ClinicianSchedule.doctor_id == doctor.id)
     if not schedule:
         schedule = ClinicianSchedule(doctor_id=doctor.id)
-    now = datetime.utcnow()
+    now = utc_now()
     schedule.timezone = "Asia/Kolkata"
     schedule.slot_minutes = 30
     schedule.draft_weekly_blocks = blocks

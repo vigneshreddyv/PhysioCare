@@ -1,13 +1,16 @@
 from datetime import datetime
 from typing import Optional
+
 from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field
+
+from app.core.time import utc_now
 
 
 class PatientAdminEditAudit(BaseModel):
     actor_user_id: PydanticObjectId
     changed_fields: list[str]
-    changed_at: datetime = Field(default_factory=datetime.utcnow)
+    changed_at: datetime = Field(default_factory=utc_now)
 
 
 class Patient(Document):

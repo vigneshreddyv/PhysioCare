@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from beanie import PydanticObjectId
 
+from app.core.time import utc_now
 from app.models.demo_entitlement import DemoEntitlement
 from app.models.home_visit_request import HomeVisitRequest
 
@@ -15,7 +14,7 @@ class DemoServiceRepository:
 
     @staticmethod
     async def set_entitlement(patient_id: str, admin_user_id: str, active: bool) -> DemoEntitlement:
-        now = datetime.utcnow()
+        now = utc_now()
         await DemoEntitlement.get_pymongo_collection().update_one(
             {"patient_id": PydanticObjectId(patient_id)},
             {
@@ -72,7 +71,7 @@ class DemoServiceRepository:
         target_status: str,
         actor_user_id: str | None = None,
     ) -> bool:
-        now = datetime.utcnow()
+        now = utc_now()
         updates = {
             "status": target_status,
             "updated_at": now,
