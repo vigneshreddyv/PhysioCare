@@ -8,7 +8,7 @@ Use this checklist for a local Phase 1 walkthrough. It demonstrates the current 
 - Use only clearly fictional demo accounts, names, phone numbers, health reasons, and home addresses.
 - Never show or paste passwords, tokens, signing secrets, environment files, or browser storage during the demo.
 - Do not enter real patient, clinician, clinic, payment, or home-address data.
-- Keep payments unconfigured. Do not describe demo access as a purchase or paid subscription.
+- Keep payments unconfigured for this local walkthrough. Test Mode code exists, but do not describe the walkthrough as a Razorpay sandbox transaction, purchase, or paid subscription unless a separately authorized provider rehearsal has actually been completed.
 - Before presenting, confirm the API and preview are healthy and use a clean fictional demo dataset.
 
 ## Recommended walkthrough
@@ -110,7 +110,7 @@ Use this checklist for a local Phase 1 walkthrough. It demonstrates the current 
 - Clinic timezone: `Asia/Kolkata`.
 - Demo clinic hours: 9:00 AM–6:00 PM, 30-minute slots; configurable and not yet confirmed per clinician/day.
 - Patient self-service clinic cancellation: allowed until exactly 24 hours before the appointment; inside 24 hours, contact the clinic.
-- No automatic cancellation fees, refunds, or payment processing.
+- No automatic cancellation fees or refunds. Payment processing remains disabled in this local demo even though guarded Razorpay Test Mode integration code exists.
 - Home visits are requests pending clinic confirmation, not confirmed appointments, and do not reserve capacity.
 - Demo entitlement is not a paid subscription.
 

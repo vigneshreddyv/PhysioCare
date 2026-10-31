@@ -1,6 +1,6 @@
 # PhysioCare Connected Demo Readiness
 
-Status date: 2026-10-25 (Asia/Kolkata)
+Status date: 2026-10-31 (Asia/Kolkata)
 
 This checkpoint distinguishes connected local application flows from mock previews, informational pages, and planned work. The delivery target is a client-review demo before 2026-10-31, not a production launch or Play Store release.
 
@@ -19,15 +19,17 @@ This checkpoint distinguishes connected local application flows from mock previe
 | Patient laboratory request and administrator coordination | Connected | Patients can submit idempotent clinic/home-collection requests, see their own requests, and withdraw eligible requests. Administrators can approve coordination, decline, and assign an approved request to an active Laboratorian. |
 | Laboratorian finalized-report upload and administrator publication | Connected and isolated-test verified | Laboratorian is an administrator-managed role. Assigned Laboratorians receive minimum required order/patient fields and can upload or replace a private finalized PDF. Only an administrator can administratively publish that exact file, and publication is recorded in the request audit history. Cross-order access is rejected. |
 | Patient and assigned-doctor released-report views | Connected and isolated-test verified | APIs and UI return only administratively published reports owned by the patient or belonging to a doctor’s assigned patients. Publication is a workflow action and is explicitly not medical validation. |
+| Razorpay payment readiness | Implemented but not connected-rehearsal verified | Test Mode order creation, server-side checkout verification, raw-body webhook authentication, event deduplication, persisted payment attempts, and captured-payment reconciliation are implemented. No sandbox transaction or real webhook delivery was performed in this checkpoint. Payments remain disabled without explicit Test Mode configuration. |
+| Administrator patient edit and history | Connected and contract-tested | Admin-only detail/update/history APIs back the UI. Email and role remain immutable; allowed profile changes record bounded metadata-only audit events, while history combines appointments and published laboratory reports. |
 
-Fresh checkpoint verification: 95 backend contract/security tests, 32 frontend contract tests, frontend lint, and a fresh exact-lock production build passed. Schedule coverage includes admin-only routes, 30-minute alignment, cross-mode overlap rejection, date exceptions/closures, published mode-specific slots, existing-appointment publication conflicts, and clinic/home booking regression. Mock visual harnesses remain separate from live authenticated behavior.
+Fresh checkpoint verification: 344 backend tests and 56 frontend contract tests passed; frontend lint completed with one pre-existing Fast Refresh warning, and a fresh exact-lock production build passed. `pip-audit` reported no known backend dependency vulnerabilities and `npm audit` reported zero vulnerabilities after dependency updates. These are isolated automated checks: no normal database, Razorpay account, or live provider was contacted. Mock visual harnesses remain separate from live authenticated behavior.
 
 PDF limitation: protected upload, administrator publication, and role-scoped report visibility passed through isolated API/UI checks. Automated browser control could not complete native filename selection, and it could not capture the rendered contents of a `blob:` PDF tab. A synthetic check confirmed that the corrected synchronous viewer opens a second blob tab and fetches the PDF, but filename selection and visible page rendering remain manual browser checks. Do not describe those two checks as verified.
 
 ## Partial, informational, or absent
 
 - **Connected laboratory rehearsal:** a disposable four-role rehearsal verified patient request, administrator assignment, Laboratorian protected upload through the API, administrator publication, and patient/assigned-doctor visibility. Browser-controlled native file selection and visual inspection of rendered PDF page contents remain unverified. The disposable database, files, sessions, and credentials were removed after the run.
-- **Payment gateway:** no provider SDK/API, payment-attempt model, server verification, authenticated webhook, or idempotent payment state machine exists. The Billing screen changes an appointment billing-status field only; it does not process or verify money.
+- **Payment gateway operation:** the Test Mode integration exists, but it has not been exercised against an authorized Razorpay sandbox account or public webhook endpoint in this checkpoint. Payments remain disabled in the isolated demos. Live mode, refunds, receipts/invoices, settlement reporting, and clinic charge/cancellation/refund policies are not implemented or approved.
 - **SMS/WhatsApp verification:** presentation exists, but no provider is connected. Email/password is the working authentication path.
 - **Demo authentication:** no persistent fictional Laboratorian account is provisioned. The disposable rehearsal accounts and credentials were removed, so the current lab screenshots remain isolated mock previews rather than reusable demo logins.
 - **Native Android/PWA packaging:** the repository is a React/Vite mobile web application. There is no Capacitor/Cordova project, Android project, web app manifest, or service worker. The `apps/*/package.json` portal placeholders are empty.
@@ -54,11 +56,11 @@ The earlier 3–4 day estimate is a preferred target, not a promise. This sequen
 - Publication is auditable, idempotent, bound to the exact reviewed storage key, and rejects changed or missing files. Laboratorian, patient, and doctor roles cannot invoke publication.
 - The remaining connected-demo step is authorization to provision one protected fictional Laboratorian account and a safe fictional patient authentication path, then run the real local patient → administrator → Laboratorian → administrator publication → patient/assigned-doctor journey.
 
-### 2026-10-26 — doctor history and payment decision
+### 2026-10-26 — doctor history and payment decision (historical plan)
 
 - The assigned-doctor longitudinal patient-history view is implemented without broadening access beyond assigned patients; guarded mobile and desktop states are visually verified with fictional data.
-- If a payment provider and test merchant credentials are supplied: begin provider test mode with server-created payment attempts, authenticated webhook verification, idempotency, and booking/payment reconciliation.
-- If provider inputs are absent: use only an explicitly labelled local payment simulation for the walkthrough. It must not be described as a sandbox integration and must not record a live charge.
+- Test Mode implementation is now present with server-created attempts, verification, authenticated webhooks, idempotency, and reconciliation. It remains disabled until an authorized sandbox configuration and clinic payment policy are supplied.
+- If provider inputs remain absent, the walkthrough must show recorded/unconfigured payment state only. It must not be described as a sandbox transaction and must not record a charge.
 
 ### 2026-10-27 — connected cross-role rehearsal
 
@@ -83,8 +85,8 @@ The earlier 3–4 day estimate is a preferred target, not a promise. This sequen
 
 ## Inputs required from the client
 
-1. **Payment path:** provider name plus test merchant credentials/webhook secret, or approval to use a clearly identified local payment simulation for the client demo.
-2. **Demo charge amount and timing:** a fictional test amount and whether payment occurs before or after booking confirmation. No clinic price should be invented.
+1. **Payment path:** authorization to use a Razorpay Test Mode merchant account and webhook secret in a protected environment, or confirmation that the demo must keep payment disabled. Do not share credentials in chat or documentation.
+2. **Demo charge amount and timing:** a fictional test amount plus approved charge, cancellation, refund, receipt, and settlement-review rules. No clinic price or policy should be invented.
 3. **Fictional Laboratorian account:** approval to create one local-only demo staff account using protected local credentials. No password belongs in documentation or chat.
 
 ## Demo acceptance boundary

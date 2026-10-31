@@ -24,7 +24,7 @@ The platform enables patients to:
 - Book laboratory tests
 - Request home sample collection
 - Access prescriptions and laboratory reports
-- Make secure online payments
+- Complete a Razorpay Test Mode checkout only when an authorized test merchant configuration is supplied
 - Manage healthcare services from one place
 
 It also provides dedicated portals for doctors, receptionists, laboratory technicians, and administrators to efficiently manage daily clinic operations.
@@ -141,10 +141,12 @@ The platform is designed with scalability in mind and will support AI-powered he
 
 ## 💳 Payment Module
 
-- Online Payments
+- Razorpay Test Mode order creation and server-side verification
+- Signed, idempotent webhook processing and captured-payment reconciliation
 - Pay at Clinic
-- Invoice Generation
 - Payment History
+
+Live charges, automatic refunds, invoices, receipts, and settlement reporting are not enabled. Merchant credentials and clinic-approved charge/cancellation/refund policies are required before any sandbox rehearsal or production use. See [`backend/RAZORPAY_TEST_MODE.md`](backend/RAZORPAY_TEST_MODE.md).
 
 ---
 
