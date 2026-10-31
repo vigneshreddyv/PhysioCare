@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
+from pymongo.errors import DuplicateKeyError
 from typing import List
 
-from app.models.appointment import Appointment
+from app.models.appointment import Appointment, canonical_appointment_date
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
@@ -86,7 +87,7 @@ class AppointmentService:
             patient_id=patient.id,
             doctor_id=doctor.id,
             service_type=schema.service_type,
-            appointment_date=schema.appointment_date,
+            appointment_date=canonical_appointment_date(appointment_date),
             time_slot=schema.time_slot,
             reason=schema.reason,
             symptoms=schema.symptoms,
@@ -103,15 +104,15 @@ class AppointmentService:
             payment_status="pending",
         )
 
-        # The unique patient/date/slot index makes this insert the final
-        # concurrency authority. Two racing requests: exactly one wins, the
-        # loser gets a safe conflict response instead of a 500.
+        # Patient and clinician unique indexes make this insert the final
+        # concurrency authority. A losing request returns a conflict instead
+        # of creating a second active reservation.
         saved = await AppointmentRepository.create_safely(appointment)
 
         if saved is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="You already have an appointment at this date and time",
+                detail="This appointment slot is no longer available. Please choose another time.",
             )
 
         # Notify patient and doctor
@@ -226,8 +227,6 @@ class AppointmentService:
                         detail="Cannot reschedule an appointment that is completed, cancelled, or marked as no-show.",
                     )
 
-                # Date & slot validation
-                from datetime import timezone
                 new_date = schema.appointment_date or appointment.appointment_date
                 new_slot = schema.time_slot or appointment.time_slot
 
@@ -240,7 +239,6 @@ class AppointmentService:
                         detail="Appointment date must be in the future",
                     )
 
-                # Doctor existence & association
                 doctor = await ProfileRepository.get_doctor_by_id(str(appointment.doctor_id))
                 if not doctor:
                     raise HTTPException(
@@ -248,7 +246,6 @@ class AppointmentService:
                         detail="Associated doctor not found",
                     )
 
-                # Availability slot verification with self-exclusion
                 doctor_busy = await AppointmentRepository.doctor_has_slot(
                     str(doctor.id),
                     new_date,
@@ -273,6 +270,21 @@ class AppointmentService:
                         detail="You already have an appointment at this time",
                     )
 
+        elif current_user_role == "doctor":
+            doctor = await ProfileRepository.get_doctor_by_user_id(current_user_id)
+            if not doctor or str(appointment.doctor_id) != str(doctor.id):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Appointment not found",
+                )
+
+            allowed_fields = {"status", "meeting_link"}
+            if set(schema.model_dump(exclude_unset=True)) - allowed_fields:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Clinicians may update only their assigned appointment status and meeting link.",
+                )
+
         old_status = appointment.status
         old_date = appointment.appointment_date
         old_slot = appointment.time_slot
@@ -281,10 +293,13 @@ class AppointmentService:
             appointment.status = schema.status
 
         if schema.appointment_date is not None:
-            appointment.appointment_date = schema.appointment_date
+            appointment.appointment_date = canonical_appointment_date(schema.appointment_date)
 
         if schema.time_slot is not None:
             appointment.time_slot = schema.time_slot
+
+        if schema.meeting_link is not None:
+            appointment.meeting_link = schema.meeting_link
 
         # -----------------------------------------------------------------
         # Billing mutation guards (Phase 4, Task 11).
@@ -329,7 +344,13 @@ class AppointmentService:
                 )
             appointment.billing_amount = schema.billing_amount
 
-        await appointment.save()
+        try:
+            await appointment.save()
+        except DuplicateKeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This appointment slot is no longer available. Please choose another time.",
+            ) from exc
 
         # Notify patient on status change
         if schema.status is not None and schema.status != old_status:

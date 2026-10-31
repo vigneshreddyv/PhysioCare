@@ -1,6 +1,7 @@
 import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Union
+from uuid import uuid4
 from jose import jwt, JWTError
 from app.core.config import settings
 
@@ -30,13 +31,13 @@ def create_access_token(subject: Union[str, Any], role: str, expires_delta: Opti
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
 
-def create_refresh_token(subject: Union[str, Any], role: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_refresh_token(subject: Union[str, Any], role: str, expires_delta: Optional[timedelta] = None, *, jti: Optional[str] = None, family_id: Optional[str] = None) -> str:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     
-    to_encode = {"exp": expire, "sub": str(subject), "role": role, "type": "refresh"}
+    to_encode = {"exp": expire, "sub": str(subject), "role": role, "type": "refresh", "jti": jti or uuid4().hex, "family_id": family_id or uuid4().hex}
     encoded_jwt = jwt.encode(to_encode, settings.JWT_REFRESH_SECRET, algorithm=ALGORITHM)
     return encoded_jwt
 

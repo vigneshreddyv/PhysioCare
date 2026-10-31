@@ -7,7 +7,7 @@ from pydantic import Field
 
 # Booked slots are protected by a unique index only while the appointment is
 # active. Cancelled/completed/no_show records must free the slot again.
-ACTIVE_STATUSES = ["pending_payment", "confirmed", "in_progress"]
+ACTIVE_STATUSES = ["pending_payment", "confirmed", "in_progress", "scheduled"]
 
 
 def canonical_appointment_date(value: datetime) -> datetime:
@@ -76,6 +76,12 @@ class Appointment(Document):
             IndexModel(
                 [("patient_id", 1), ("appointment_date", 1), ("time_slot", 1)],
                 name="uniq_patient_date_slot",
+                unique=True,
+                partialFilterExpression={"status": {"$in": ACTIVE_STATUSES}},
+            ),
+            IndexModel(
+                [("doctor_id", 1), ("appointment_date", 1), ("time_slot", 1)],
+                name="uniq_doctor_date_slot",
                 unique=True,
                 partialFilterExpression={"status": {"$in": ACTIVE_STATUSES}},
             ),

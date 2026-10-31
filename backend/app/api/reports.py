@@ -121,6 +121,10 @@ async def create_report_by_admin(
             detail=f"Invalid JSON data payload: {e}"
         )
 
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(report_create.patient_id, current_user)
+
     file_path = None
     if file:
         if not file.filename.lower().endswith(".pdf"):

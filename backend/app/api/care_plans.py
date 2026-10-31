@@ -97,7 +97,9 @@ async def create_care_plan(
 ):
     """Create a new Care Plan. Restricted to doctor/admin."""
     therapist_id = str(current_user.id)
-    if "doctor" in current_user.roles:
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(payload.patient_id, current_user)
         from app.repositories.profile_repository import ProfileRepository
         doctor = await ProfileRepository.get_doctor_by_user_id(str(current_user.id))
         if doctor:
@@ -149,6 +151,14 @@ async def update_care_plan(
 ):
     """Update an existing Care Plan. Restricted to doctor/admin."""
     update_data = payload.model_dump(exclude_unset=True)
+
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        from app.repositories.care_plan_repository import CarePlanRepository
+        care_plan = await CarePlanRepository.get_by_id(care_plan_id)
+        if not care_plan:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Care Plan not found")
+        await verify_caseload(str(care_plan.patient_id), current_user)
 
     try:
         cp = await CarePlanService.update_care_plan(care_plan_id, update_data)
@@ -219,6 +229,14 @@ async def update_stage_status_endpoint(
     current_user: User = Depends(RoleChecker(["admin", "doctor"]))
 ):
     """Update clinical status of a treatment stage."""
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        from app.repositories.care_plan_repository import CarePlanRepository
+        care_plan = await CarePlanRepository.get_by_id(care_plan_id)
+        if not care_plan:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Care Plan not found")
+        await verify_caseload(str(care_plan.patient_id), current_user)
+
     try:
         cp = await CarePlanService.update_stage_status(
             care_plan_id=care_plan_id,
@@ -264,6 +282,14 @@ async def update_goal_progress_endpoint(
     current_user: User = Depends(RoleChecker(["admin", "doctor"]))
 ):
     """Update clinical progress and status of a recovery goal."""
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        from app.repositories.care_plan_repository import CarePlanRepository
+        care_plan = await CarePlanRepository.get_by_id(care_plan_id)
+        if not care_plan:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Care Plan not found")
+        await verify_caseload(str(care_plan.patient_id), current_user)
+
     try:
         cp = await CarePlanService.update_goal_progress(
             care_plan_id=care_plan_id,
@@ -343,6 +369,8 @@ async def get_care_plan_exercises(
     current_user: User = Depends(get_current_user)
 ):
     """Retrieve exercises assigned to a specific Care Plan, validating ownership."""
+    if current_user.role not in {"patient", "doctor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation unauthorized")
     from app.repositories.profile_repository import ProfileRepository
     from app.repositories.care_plan_repository import CarePlanRepository
     from app.schemas.exercise import ExerciseAssignmentResponse
@@ -362,6 +390,9 @@ async def get_care_plan_exercises(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Care plan not found or unauthorized access"
             )
+    elif current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(str(care_plan.patient_id), current_user)
 
     assignments = await ExerciseService.list_assignments_for_care_plan(care_plan_id)
     return [

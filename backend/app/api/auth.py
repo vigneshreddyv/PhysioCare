@@ -35,3 +35,8 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "profile": profile
     }
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(current_user: User = Depends(get_current_user)):
+    await AuthService.logout(current_user)
+    return None

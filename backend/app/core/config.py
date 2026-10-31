@@ -2,7 +2,7 @@ import json
 from typing import Any, Iterator, Optional, Tuple
 
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict, SecretStr
+from pydantic import ConfigDict, SecretStr, model_validator
 
 # Phase 4 Task 21 — secret redaction in Settings diagnostics.
 # The Task 20 pytest failure report exposed the full Settings repr, which
@@ -28,6 +28,8 @@ SECRET_SETTINGS_FIELDS = frozenset({
 # Repr'd as SecretStr('**********') — pydantic's own redacted display.
 _REDACTED_REPR = SecretStr("redacted")
 _REDACTED_PLACEHOLDER = "**********"
+_DEVELOPMENT_JWT_SECRET = "supersecretjwtsecretkeyshouldbechangedinproduction123!"
+_DEVELOPMENT_REFRESH_SECRET = "supersecretjwtrefreshsecretkeyshouldbechangedinproduction123!"
 
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -125,5 +127,21 @@ class Settings(BaseSettings):
         """model_dump_json with secret values replaced by a fixed placeholder."""
         indent = kwargs.pop("indent", None)
         return json.dumps(self.model_dump(**kwargs), default=str, indent=indent)
+
+    @model_validator(mode="after")
+    def require_production_jwt_secrets(self):
+        if self.JWT_SECRET == self.JWT_REFRESH_SECRET:
+            raise ValueError("JWT_SECRET and JWT_REFRESH_SECRET must be different")
+
+        if self.ENVIRONMENT.strip().casefold() in {"prod", "production"}:
+            if (
+                self.JWT_SECRET == _DEVELOPMENT_JWT_SECRET
+                or self.JWT_REFRESH_SECRET == _DEVELOPMENT_REFRESH_SECRET
+            ):
+                raise ValueError("Production JWT secrets must be explicitly configured")
+            if len(self.JWT_SECRET.encode("utf-8")) < 32 or len(self.JWT_REFRESH_SECRET.encode("utf-8")) < 32:
+                raise ValueError("Production JWT secrets must be at least 32 bytes")
+
+        return self
 
 settings = Settings()

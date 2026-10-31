@@ -22,6 +22,8 @@ async def list_exercises(
     current_user: User = Depends(get_current_user)
 ):
     """Retrieve all exercises in the catalog. Active only for patients, all for clinician."""
+    if current_user.role not in {"patient", "doctor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation unauthorized")
     active_only = current_user.role == "patient"
     exercises = await ExerciseService.list_exercises(active_only=active_only)
     return [
@@ -52,6 +54,8 @@ async def get_exercise(
     current_user: User = Depends(get_current_user)
 ):
     """Retrieve details of a specific exercise in the catalog."""
+    if current_user.role not in {"patient", "doctor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation unauthorized")
     exercise = await ExerciseService.get_exercise(exercise_id)
     if not exercise:
         raise HTTPException(
@@ -89,6 +93,8 @@ async def list_assignments(
     current_user: User = Depends(get_current_user)
 ):
     """List exercise assignments. Patients can only fetch their own."""
+    if current_user.role not in {"patient", "doctor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation unauthorized")
     if current_user.role == "patient":
         patient = await ProfileRepository.get_patient_by_user_id(str(current_user.id))
         if not patient:
@@ -133,6 +139,8 @@ async def get_assignment(
     current_user: User = Depends(get_current_user)
 ):
     """Retrieve details of a specific exercise assignment."""
+    if current_user.role not in {"patient", "doctor", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operation unauthorized")
     assignment = await ExerciseService.get_assignment(assignment_id)
     if not assignment:
         raise HTTPException(
@@ -147,6 +155,9 @@ async def get_assignment(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Assignment not found or unauthorized access"
             )
+    elif current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(str(assignment.patient_id), current_user)
 
     return ExerciseAssignmentResponse(
         id=str(assignment.id),
@@ -171,6 +182,10 @@ async def create_assignment(
     current_user: User = Depends(RoleChecker(["admin", "doctor"]))
 ):
     """Create a new exercise assignment (Clinicians only)."""
+    if current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(payload.patient_id, current_user)
+
     try:
         assignment = await ExerciseService.create_assignment(payload.model_dump(), str(current_user.id))
         return ExerciseAssignmentResponse(
@@ -224,6 +239,9 @@ async def update_assignment(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Assignment not found or unauthorized access"
             )
+    elif current_user.role == "doctor":
+        from app.middleware.auth import verify_caseload
+        await verify_caseload(str(assignment.patient_id), current_user)
 
     try:
         updated = await ExerciseService.update_assignment(

@@ -13,6 +13,7 @@ from app.models.payment_refund import PaymentRefund
 from app.models.report import Report
 from app.models.care_plan import CarePlan, CarePlanHistory
 from app.models.exercise import Exercise, ExerciseAssignment, ExerciseProgress
+from app.models.auth_session import AuthSession
 
 # Custom client subclass to ensure compatibility between Beanie 2.1.0 and Motor 3.6+ / PyMongo 4.9+
 # PyMongo 4.9+ removed append_metadata, which Beanie 2.1.0 internally tries to call.
@@ -41,5 +42,6 @@ async def init_db():
             ExerciseProgress,
             WebhookEvent,
             PaymentRefund,
+            AuthSession,
         ]
     )

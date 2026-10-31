@@ -187,6 +187,68 @@ def test_runtime_secret_values_absent_from_their_own_repr():
     assert repr(s.JWT_SECRET) == f"'{FAKE_SECRETS['JWT_SECRET']}'"
 
 
+def test_production_rejects_the_shipped_jwt_defaults():
+    with pytest.raises(ValidationError, match="explicitly configured"):
+        Settings(_env_file=None, ENVIRONMENT="production")
+
+
+def test_production_accepts_distinct_configured_jwt_secrets():
+    configured = make_isolated_settings(ENVIRONMENT="production")
+    assert configured.ENVIRONMENT == "production"
+
+
+@pytest.mark.parametrize("environment", ["prod", "production", "PROD", " Production "])
+@pytest.mark.parametrize("field", ["JWT_SECRET", "JWT_REFRESH_SECRET"])
+def test_production_aliases_reject_jwt_secrets_shorter_than_32_utf8_bytes(environment, field):
+    overrides = {
+        "ENVIRONMENT": environment,
+        "JWT_SECRET": "a" * 32,
+        "JWT_REFRESH_SECRET": "b" * 32,
+    }
+    overrides[field] = "é" * 15  # 30 UTF-8 bytes, despite 15 characters.
+
+    with pytest.raises(ValidationError, match="at least 32 bytes"):
+        Settings(_env_file=None, **overrides)
+
+
+@pytest.mark.parametrize("environment", ["development", "test"])
+def test_nonproduction_environments_retain_short_distinct_secret_behavior(environment):
+    configured = Settings(
+        _env_file=None,
+        ENVIRONMENT=environment,
+        JWT_SECRET="short-access",
+        JWT_REFRESH_SECRET="short-refresh",
+    )
+
+    assert configured.JWT_SECRET == "short-access"
+    assert configured.JWT_REFRESH_SECRET == "short-refresh"
+
+
+def test_jwt_validation_errors_do_not_expose_secret_values():
+    access_secret = "short-access-secret-123456"
+    refresh_secret = "refresh-secret-that-must-not-appear-in-errors"
+
+    with pytest.raises(ValidationError, match="at least 32 bytes") as exc_info:
+        Settings(
+            _env_file=None,
+            ENVIRONMENT="production",
+            JWT_SECRET=access_secret,
+            JWT_REFRESH_SECRET=refresh_secret,
+        )
+
+    error_text = str(exc_info.value)
+    assert access_secret not in error_text
+    assert refresh_secret not in error_text
+
+
+def test_jwt_secrets_must_be_distinct_in_every_environment():
+    with pytest.raises(ValidationError, match="must be different"):
+        make_isolated_settings(
+            JWT_SECRET=FAKE_SECRETS["JWT_SECRET"],
+            JWT_REFRESH_SECRET=FAKE_SECRETS["JWT_SECRET"],
+        )
+
+
 # ---------------------------------------------------------------------------
 # Live singleton — shape-only guard, zero real-value reads
 # ---------------------------------------------------------------------------

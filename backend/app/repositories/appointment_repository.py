@@ -3,7 +3,7 @@ from typing import List, Optional
 
 from beanie import PydanticObjectId
 
-from app.models.appointment import Appointment, canonical_appointment_date
+from app.models.appointment import ACTIVE_STATUSES, Appointment, canonical_appointment_date
 
 
 class AppointmentRepository:
@@ -127,7 +127,7 @@ class AppointmentRepository:
             Appointment.appointment_date >= day_start,
             Appointment.appointment_date < day_end,
             Appointment.time_slot == time_slot,
-            Appointment.status != "cancelled",
+            Appointment.status.in_(ACTIVE_STATUSES),
         ]
         if exclude_appointment_id:
             query_filters.append(Appointment.id != PydanticObjectId(exclude_appointment_id))
@@ -152,7 +152,7 @@ class AppointmentRepository:
             Appointment.appointment_date >= day_start,
             Appointment.appointment_date < day_end,
             Appointment.time_slot == time_slot,
-            Appointment.status != "cancelled",
+            Appointment.status.in_(ACTIVE_STATUSES),
         ]
         if exclude_appointment_id:
             query_filters.append(Appointment.id != PydanticObjectId(exclude_appointment_id))
