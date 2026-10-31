@@ -46,7 +46,7 @@ class LabRequestService:
             )
         if schema.mode == "home_collection" and schema.city.casefold() != settings.DEMO_HOME_SERVICE_CITY.casefold():
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Home laboratory collection is currently limited to {settings.DEMO_HOME_SERVICE_CITY} city",
             )
         request = await LabRequestRepository.create_idempotent(LabRequest(

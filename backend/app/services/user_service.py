@@ -83,13 +83,13 @@ class UserService:
         updates = schema.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provide a name, phone number, or gender to update",
             )
         if "full_name" in updates:
             if updates["full_name"] is None:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Full name cannot be empty",
                 )
             user.full_name = updates["full_name"]
@@ -161,7 +161,7 @@ class UserService:
         updates = schema.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provide at least one profile field to update",
             )
         if "full_name" in updates:
@@ -244,7 +244,7 @@ class UserService:
         updates = schema.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provide at least one patient field to update",
             )
 
@@ -284,13 +284,13 @@ class UserService:
         updates = schema.model_dump(exclude_unset=True)
         if not updates:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Provide a name or phone number to update",
             )
         if "full_name" in updates:
             if updates["full_name"] is None:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="Full name cannot be empty",
                 )
             user.full_name = updates["full_name"]

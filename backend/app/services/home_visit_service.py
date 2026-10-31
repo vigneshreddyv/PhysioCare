@@ -150,7 +150,7 @@ class HomeVisitService:
         try:
             validate_booking_date(appointment_date)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         if doctor_id == HomeVisitService.NO_PREFERENCE_DOCTOR_ID:
             doctors = await HomeVisitService._eligible_home_visit_doctors()
         else:
@@ -224,7 +224,7 @@ class HomeVisitService:
         patient = await HomeVisitService._entitled_patient(user_id)
         if schema.city.casefold() != settings.DEMO_HOME_SERVICE_CITY.casefold():
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Home visits are currently limited to {settings.DEMO_HOME_SERVICE_CITY} city",
             )
         submission_digest = sha256(schema.submission_key.encode("utf-8")).hexdigest()
@@ -340,7 +340,7 @@ class HomeVisitService:
         if not appointment:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home visit not found")
         if getattr(appointment, "service_mode", "clinic") != "home_visit":
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only home visits can be allocated here")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Only home visits can be allocated here")
         if appointment.status != "scheduled":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only scheduled home visits can be allocated")
 

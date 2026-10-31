@@ -85,7 +85,7 @@ class ClinicianScheduleService:
         for exception in schema.date_exceptions:
             if exception.date < earliest or exception.date > latest:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Date exceptions must stay inside the current {settings.BOOKING_HORIZON_DAYS}-day booking window",
                 )
         schedule = await ClinicianScheduleRepository.get_by_doctor_id(doctor_id)
@@ -136,14 +136,14 @@ class ClinicianScheduleService:
             validate_booking_date(appointment_date)
             normalized = parse_time_slot(time_slot).strftime("%I:%M %p")
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         slots, published = await ClinicianScheduleService.effective_slots(doctor_id, appointment_date, service_mode)
         if normalized not in slots:
             source = "published clinician schedule" if published else "configured demonstration schedule"
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Choose a slot inside the {source}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Choose a slot inside the {source}")
         starts_at = clinic_start_to_utc_naive(appointment_date, normalized)
         if starts_at <= datetime.now(timezone.utc).replace(tzinfo=None):
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Choose a future appointment slot")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Choose a future appointment slot")
         return starts_at, published
 
     @staticmethod
@@ -152,7 +152,7 @@ class ClinicianScheduleService:
         try:
             validate_booking_date(appointment_date)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         schedule = await ClinicianScheduleRepository.get_by_doctor_id(doctor_id)
         if not schedule or schedule.draft_revision == 0:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Save a draft schedule before previewing it")
