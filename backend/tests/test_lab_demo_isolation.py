@@ -27,6 +27,7 @@ from app.services.lab_request_service import LabRequestService
 
 def _demo_settings(monkeypatch, tmp_path, **overrides):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     values = {
         "MONGODB_URL": LAB_DEMO_MONGODB_URL,
         "DATABASE_NAME": LAB_DEMO_DATABASE_NAME,
@@ -77,6 +78,7 @@ def test_demo_settings_reject_database_network_payment_or_storage_drift(
 
 def test_selected_demo_environment_file_requires_demo_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setenv(
         "PHYSIOCARE_ENV_FILE",
         str(lab_demo_home() / ".env"),

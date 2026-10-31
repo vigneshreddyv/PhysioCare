@@ -252,6 +252,7 @@ media/
 # Local environment variants
 .env.*
 frontend/.env.*
+!frontend/.env.home-visit-demo
 
 # Local worktrees and AI tool state
 .worktrees/
