@@ -1,7 +1,8 @@
 import re
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from typing import Optional
+from typing import Literal, Optional
 
 
 class PatientProfileUpdate(BaseModel):
@@ -72,3 +73,30 @@ class ReceptionPatientUpdate(BaseModel):
 class PatientOut(DoctorPatientOut):
     email: str
     subscription_status: str
+
+
+class AdminPatientUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    phone: Optional[str] = Field(default=None, max_length=24)
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = Field(default=None, max_length=80)
+    subscription_status: Optional[Literal["active", "inactive", "pending"]] = None
+
+    _normalize_full_name = field_validator("full_name")(
+        PatientProfileUpdate.normalize_full_name.__func__
+    )
+    _validate_phone = field_validator("phone")(
+        PatientProfileUpdate.validate_phone.__func__
+    )
+    _normalize_gender = field_validator("gender")(
+        PatientProfileUpdate.normalize_gender.__func__
+    )
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: Optional[date]) -> Optional[date]:
+        if value is not None and value > date.today():
+            raise ValueError("Date of birth cannot be in the future")
+        return value

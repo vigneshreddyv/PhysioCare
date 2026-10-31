@@ -3,6 +3,7 @@ from typing import List, Union
 from app.middleware.auth import get_current_user, RoleChecker
 from app.schemas.doctor import DoctorOut, DoctorProfileUpdate, PublicDoctorOut
 from app.schemas.patient import (
+    AdminPatientUpdate,
     DoctorPatientOut,
     PatientOut,
     PatientProfileUpdate,
@@ -12,7 +13,8 @@ from app.schemas.patient import (
 from app.services.user_service import UserService
 from app.schemas.auth import StaffCreate, StaffOut
 from app.schemas.lab_request import LaboratorianSummary
-from app.schemas.doctor_history import DoctorPatientHistoryOut
+from app.schemas.doctor_history import AdminPatientHistoryOut, DoctorPatientHistoryOut
+from app.services.admin_patient_history_service import AdminPatientHistoryService
 from app.services.auth_service import AuthService
 from app.services.doctor_history_service import DoctorHistoryService
 
@@ -102,6 +104,35 @@ async def list_patients(
     if current_user.role == "admin":
         return await UserService.list_patients()
     return await UserService.list_assigned_patients(str(current_user.id))
+
+
+@router.get("/patients/{patient_id}", response_model=PatientOut)
+async def get_admin_patient(
+    patient_id: str,
+    current_user = Depends(RoleChecker(["admin"])),
+):
+    return await UserService.get_admin_patient(patient_id)
+
+
+@router.patch("/patients/{patient_id}", response_model=PatientOut)
+async def update_admin_patient(
+    patient_id: str,
+    schema: AdminPatientUpdate,
+    current_user = Depends(RoleChecker(["admin"])),
+):
+    return await UserService.update_admin_patient(
+        patient_id,
+        schema,
+        str(current_user.id),
+    )
+
+
+@router.get("/patients/{patient_id}/history", response_model=AdminPatientHistoryOut)
+async def get_admin_patient_history(
+    patient_id: str,
+    current_user = Depends(RoleChecker(["admin"])),
+):
+    return await AdminPatientHistoryService.get_patient_history(patient_id)
 
 
 @router.get(

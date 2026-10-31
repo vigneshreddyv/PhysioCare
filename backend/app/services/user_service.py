@@ -1,4 +1,7 @@
+from datetime import datetime
 from typing import List, Optional
+
+from beanie import PydanticObjectId
 
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
@@ -6,17 +9,31 @@ from app.repositories.appointment_repository import AppointmentRepository
 from app.schemas.doctor import DoctorOut, DoctorProfileUpdate, PublicDoctorOut
 from app.schemas.patient import (
     DoctorPatientOut,
+    AdminPatientUpdate,
     PatientOut,
     PatientProfileUpdate,
     ReceptionPatientOut,
     ReceptionPatientUpdate,
 )
+from app.models.patient import PatientAdminEditAudit
 from app.schemas.lab_request import LaboratorianSummary
 from app.schemas.auth import StaffOut
 from fastapi import HTTPException, status
 
 
 class UserService:
+
+    @staticmethod
+    def _patient_out(patient, user) -> PatientOut:
+        return PatientOut(
+            id=str(patient.id),
+            full_name=user.full_name,
+            email=user.email,
+            phone=patient.phone,
+            date_of_birth=patient.date_of_birth,
+            gender=getattr(patient, "gender", None),
+            subscription_status=patient.subscription_status,
+        )
 
     @staticmethod
     async def list_staff() -> list[StaffOut]:
@@ -175,17 +192,7 @@ class UserService:
             if not user:
                 continue
 
-            result.append(
-                PatientOut(
-                    id=str(p.id),
-                    full_name=user.full_name,
-                    email=user.email,
-                    phone=p.phone,
-                    date_of_birth=p.date_of_birth,
-                    gender=getattr(p, "gender", None),
-                    subscription_status=p.subscription_status,
-                )
-            )
+            result.append(UserService._patient_out(p, user))
 
         return result
 
@@ -208,6 +215,59 @@ class UserService:
             )
 
         return result
+
+    @staticmethod
+    async def get_admin_patient(patient_id: str) -> PatientOut:
+        patient = await ProfileRepository.get_patient_by_id(patient_id)
+        user = await UserRepository.get_by_id(str(patient.user_id)) if patient else None
+        if not patient or not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Patient not found",
+            )
+        return UserService._patient_out(patient, user)
+
+    @staticmethod
+    async def update_admin_patient(
+        patient_id: str,
+        schema: AdminPatientUpdate,
+        actor_user_id: str,
+    ) -> PatientOut:
+        patient = await ProfileRepository.get_patient_by_id(patient_id)
+        user = await UserRepository.get_by_id(str(patient.user_id)) if patient else None
+        if not patient or not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Patient not found",
+            )
+
+        updates = schema.model_dump(exclude_unset=True)
+        if not updates:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Provide at least one patient field to update",
+            )
+
+        changed_fields = sorted(updates)
+        if "full_name" in updates:
+            user.full_name = updates.pop("full_name")
+            await UserRepository.save(user)
+        if "date_of_birth" in updates:
+            birth_date = updates.pop("date_of_birth")
+            patient.date_of_birth = birth_date.isoformat() if birth_date else None
+        for field, value in updates.items():
+            setattr(patient, field, value)
+
+        patient.admin_edit_audit = [
+            *getattr(patient, "admin_edit_audit", [])[-49:],
+            PatientAdminEditAudit(
+                actor_user_id=PydanticObjectId(actor_user_id),
+                changed_fields=changed_fields,
+                changed_at=datetime.utcnow(),
+            ),
+        ]
+        await ProfileRepository.save_patient(patient)
+        return UserService._patient_out(patient, user)
 
     @staticmethod
     async def update_reception_patient(
@@ -291,15 +351,7 @@ class UserService:
         if not user:
             return None
 
-        return PatientOut(
-            id=str(patient.id),
-            full_name=user.full_name,
-            email=user.email,
-            phone=patient.phone,
-            date_of_birth=patient.date_of_birth,
-            gender=getattr(patient, "gender", None),
-            subscription_status=patient.subscription_status,
-        )
+        return UserService._patient_out(patient, user)
 
     @staticmethod
     async def get_doctor_profile(user_id: str) -> Optional[DoctorOut]:

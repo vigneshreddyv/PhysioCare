@@ -52,15 +52,25 @@ test('admin appointment list uses a truthful recent-record heading', async () =>
 });
 
 
-test('patient history placeholder returns to the registered patient directory', async () => {
-  const [appSource, historySource] = await Promise.all([
+test('admin patient edit and history routes use authenticated server contracts', async () => {
+  const [appSource, editSource, historySource] = await Promise.all([
     source('src/App.jsx'),
+    source('src/pages/admin/AdminPatientEdit.jsx'),
     source('src/pages/admin/AdminPatientHistory.jsx'),
   ]);
 
   assert.match(appSource, /<Route path="patients" element={<PatientsList \/>} \/>/);
+  assert.match(appSource, /path="patients-edit\/:id" element={<AdminPatientEdit \/>}/);
+  assert.match(appSource, /path="patients-history\/:id" element={<AdminPatientHistory \/>}/);
+  assert.match(editSource, /api\.get\(`\/users\/patients\/\$\{id\}`\)/);
+  assert.match(editSource, /api\.patch\(`\/users\/patients\/\$\{id\}`/);
+  assert.match(editSource, /registered email and account role cannot be changed/i);
+  assert.match(editSource, /Previous field values are not copied into the audit trail/);
+  assert.match(historySource, /api\.get\(`\/users\/patients\/\$\{id\}\/history`\)/);
+  assert.match(historySource, /Profile edit audit/);
+  assert.match(historySource, /api\.get\(`\/lab-requests\/\$\{report\.request_id\}\/report-file`/);
   assert.match(historySource, /navigate\('\/admin\/patients'\)/);
-  assert.doesNotMatch(historySource, /\/admin\/patients\/\$\{/);
+  assert.doesNotMatch(editSource, /email:\s*form\.email/);
 });
 
 test('laboratory request management has a dedicated Admin-only route and navigation entry', async () => {

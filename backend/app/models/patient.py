@@ -1,5 +1,13 @@
+from datetime import datetime
 from typing import Optional
 from beanie import Document, PydanticObjectId
+from pydantic import BaseModel, Field
+
+
+class PatientAdminEditAudit(BaseModel):
+    actor_user_id: PydanticObjectId
+    changed_fields: list[str]
+    changed_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Patient(Document):
@@ -19,6 +27,10 @@ class Patient(Document):
 
     saved_home_address: Optional[str] = None
     demo_rehearsal_tag: Optional[str] = None
+
+    # Metadata-only audit history. Values are intentionally excluded so
+    # contact and identity data are not duplicated into an audit log.
+    admin_edit_audit: list[PatientAdminEditAudit] = Field(default_factory=list)
 
     class Settings:
         name = "patients"
