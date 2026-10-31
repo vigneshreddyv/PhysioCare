@@ -1,15 +1,8 @@
 import pytest
-import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 
 # This makes the pytest-asyncio plugin work properly
 pytest_plugins = ('pytest_asyncio',)
-
-
-# Configure asyncio mode
-def pytest_configure(config):
-    config.option.asyncio_mode = 'auto'
-
 
 @pytest.fixture(autouse=True)
 def mock_beanie_document_init():
