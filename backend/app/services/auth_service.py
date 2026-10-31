@@ -147,20 +147,24 @@ class AuthService:
                 detail="Incorrect email or password",
             )
 
+        session_id = PydanticObjectId()
         now = datetime.utcnow()
-        session = await SessionRepository.create(
-            AuthSession(
-                id=PydanticObjectId(),
-                user_id=user.id,
-                refresh_token_hash="pending",
-                csrf_token_hash="pending",
-                demo_rehearsal_tag=getattr(user, "demo_rehearsal_tag", None),
-                expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-                created_at=now,
-                rotated_at=now,
-            )
+        bundle = AuthService._create_session_bundle(user, str(session_id))
+        session = AuthSession.model_construct(
+            id=session_id,
+            user_id=user.id,
+            refresh_token_hash=hash_session_secret(bundle.refresh_token),
+            csrf_token_hash=hash_session_secret(bundle.csrf_token),
+            demo_rehearsal_tag=getattr(user, "demo_rehearsal_tag", None),
+            expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            created_at=now,
+            rotated_at=now,
         )
-        return await AuthService._rotate_session(session, user)
+        try:
+            await SessionRepository.create(session)
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
+        return bundle
 
     @staticmethod
     async def refresh_tokens(refresh_token: str, csrf_token: str) -> SessionBundle:
@@ -173,7 +177,33 @@ class AuthService:
             refresh_token,
             csrf_token,
         )
-        return await AuthService._rotate_session(session, user)
+        bundle = AuthService._create_session_bundle(user, str(session.id))
+        now = datetime.utcnow()
+        try:
+            rotated = await SessionRepository.rotate_for_refresh(
+                session_id=str(session.id),
+                user_id=session.user_id,
+                current_refresh_token_hash=hash_session_secret(refresh_token),
+                csrf_token_hash=hash_session_secret(csrf_token),
+                new_refresh_token_hash=hash_session_secret(bundle.refresh_token),
+                new_expires_at=(
+                    now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+                ),
+                now=now,
+            )
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
+
+        if not rotated:
+            await AuthService._revoke_session_id(
+                str(session.id),
+                reason="refresh_token_reuse_detected",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token revoked or already used",
+            )
+        return bundle
 
     @staticmethod
     async def issue_csrf_token(refresh_token: str) -> str:
@@ -203,10 +233,7 @@ class AuthService:
             session_id = payload.get("sid") if payload else None
             if not session_id:
                 continue
-            session = await SessionRepository.get_by_id(session_id)
-            if session and session.revoked_at is None:
-                session.revoked_at = datetime.utcnow()
-                await SessionRepository.save(session)
+            await AuthService._revoke_session_id(session_id, reason="logout")
             return
 
     @staticmethod
@@ -217,9 +244,15 @@ class AuthService:
         require_csrf: bool = True,
     ) -> tuple[AuthSession, User]:
         if not payload or payload.get("type") != "refresh" or not payload.get("sid"):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid session",
+            )
 
-        session = await SessionRepository.get_by_id(payload["sid"])
+        try:
+            session = await SessionRepository.get_by_id(payload["sid"])
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
         if (
             not session
             or session.revoked_at is not None
@@ -232,8 +265,10 @@ class AuthService:
             session.refresh_token_hash,
             hash_session_secret(refresh_token),
         ):
-            session.revoked_at = datetime.utcnow()
-            await SessionRepository.save(session)
+            await AuthService._revoke_session_id(
+                str(session.id),
+                reason="refresh_token_reuse_detected",
+            )
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
 
         if require_csrf and (
@@ -243,27 +278,51 @@ class AuthService:
                 hash_session_secret(csrf_token),
             )
         ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF validation failed",
+            )
 
-        user = await UserRepository.get_by_id(payload["sub"])
+        try:
+            user = await UserRepository.get_by_id(payload["sub"])
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
         if not user or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid session",
+            )
         return session, user
 
     @staticmethod
-    async def _rotate_session(session: AuthSession, user: User) -> SessionBundle:
-        now = datetime.utcnow()
-        session.expires_at = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        session.rotated_at = now
-        access_token = create_access_token(user.id, user.role, str(session.id))
-        refresh_token = create_refresh_token(user.id, user.role, str(session.id))
-        csrf_token = create_csrf_token(str(session.id))
-        session.refresh_token_hash = hash_session_secret(refresh_token)
-        session.csrf_token_hash = hash_session_secret(csrf_token)
-        await SessionRepository.save(session)
+    def _create_session_bundle(user: User, session_id: str) -> SessionBundle:
+        try:
+            access_token = create_access_token(user.id, user.role, session_id)
+            refresh_token = create_refresh_token(user.id, user.role, session_id)
+            csrf_token = create_csrf_token(session_id)
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
         return SessionBundle(
             access_token=access_token,
             refresh_token=refresh_token,
             csrf_token=csrf_token,
             user=user,
+        )
+
+    @staticmethod
+    async def _revoke_session_id(session_id: str, *, reason: str) -> None:
+        try:
+            await SessionRepository.revoke_by_id(
+                session_id,
+                reason=reason,
+                now=datetime.utcnow(),
+            )
+        except Exception as exc:
+            raise AuthService._authentication_unavailable() from exc
+
+    @staticmethod
+    def _authentication_unavailable() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
         )

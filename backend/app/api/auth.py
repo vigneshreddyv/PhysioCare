@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
 from app.models.user import User
 from app.middleware.auth import get_current_user
@@ -19,7 +21,12 @@ async def register(schema: UserRegister):
     user = await AuthService.register(schema)
     return {"message": "Registration successful", "email": user.email}
 
-def set_session_cookies(response: Response, access_token: str, refresh_token: str, csrf_token: str) -> None:
+def set_session_cookies(
+    response: Response,
+    access_token: str,
+    refresh_token: str,
+    csrf_token: str,
+) -> None:
     secure = settings.cookie_secure
     response.set_cookie(
         ACCESS_COOKIE_NAME,
@@ -123,7 +130,11 @@ async def logout(
     csrf_header: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
     csrf_cookie: str | None = Cookie(default=None, alias=CSRF_COOKIE_NAME),
 ):
-    if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+    if (
+        not csrf_header
+        or not csrf_cookie
+        or not secrets.compare_digest(csrf_header, csrf_cookie)
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
     if refresh_token:
         await AuthService.validate_refresh_session(refresh_token, csrf_header)

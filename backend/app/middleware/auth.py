@@ -53,7 +53,13 @@ async def get_current_user(
             detail="Invalid or expired access token",
         )
 
-    session = await SessionRepository.get_by_id(session_id)
+    try:
+        session = await SessionRepository.get_by_id(session_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service unavailable",
+        ) from exc
     if (
         not session
         or session.revoked_at is not None
@@ -74,7 +80,10 @@ async def get_current_user(
                 hash_session_secret(csrf_header),
             )
         ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF validation failed",
+            )
 
     try:
         user = await UserRepository.get_by_id(user_id)

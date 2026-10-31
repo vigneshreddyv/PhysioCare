@@ -348,17 +348,20 @@ def test_laboratorian_uses_shared_authentication_flow(monkeypatch):
         "role": "laboratorian",
         "hashed_password": "stored-password-hash",
     })()
-    session = object()
     monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=user))
     monkeypatch.setattr("app.services.auth_service.verify_password", lambda _password, _hashed: True)
-    monkeypatch.setattr("app.services.auth_service.AuthSession", lambda **_values: session)
-    monkeypatch.setattr("app.services.auth_service.SessionRepository.create", AsyncMock(return_value=session))
-    monkeypatch.setattr(AuthService, "_rotate_session", AsyncMock(return_value="laboratorian-session"))
+    create = AsyncMock()
+    monkeypatch.setattr("app.services.auth_service.SessionRepository.create", create)
 
     result = asyncio.run(AuthService.login("lab@example.com", "not-logged"))
 
-    assert result == "laboratorian-session"
-    AuthService._rotate_session.assert_awaited_once_with(session, user)
+    assert result.user is user
+    assert result.access_token
+    assert result.refresh_token
+    create.assert_awaited_once()
+    session = create.await_args.args[0]
+    assert session.user_id == user.id
+    assert session.refresh_token_hash != result.refresh_token
 
 
 def test_role_guards_match_authorized_workflows():
