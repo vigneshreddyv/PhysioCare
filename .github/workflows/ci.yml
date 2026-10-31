@@ -60,6 +60,8 @@ jobs:
         run: npm run lint
       - name: Build production bundle
         run: npm run build
+      - name: Enforce production bundle budget
+        run: npm run check:bundle
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
