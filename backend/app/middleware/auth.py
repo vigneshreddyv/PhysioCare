@@ -2,7 +2,7 @@ import secrets
 from typing import List
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from jose import ExpiredSignatureError, JWTError, jwt
+import jwt
 
 from app.core.time import utc_now
 from app.core.security import (
@@ -29,12 +29,12 @@ async def get_current_user(
 
     try:
         payload = jwt.decode(access_token, settings.JWT_SECRET, algorithms=[ALGORITHM])
-    except ExpiredSignatureError:
+    except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         )
-    except JWTError:
+    except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired access token",

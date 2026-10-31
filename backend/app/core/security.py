@@ -3,8 +3,10 @@ import hashlib
 import hmac
 import secrets
 from typing import Any, Dict, Optional, Union
-from jose import jwt, JWTError
+
+import jwt
 from passlib.context import CryptContext
+
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -70,7 +72,7 @@ def decode_token(token: str, secret: str = settings.JWT_SECRET) -> Dict[str, Any
     try:
         decoded = jwt.decode(token, secret, algorithms=[ALGORITHM])
         return decoded
-    except JWTError:
+    except jwt.InvalidTokenError:
         return {}
 
 

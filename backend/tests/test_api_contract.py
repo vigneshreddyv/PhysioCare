@@ -1576,6 +1576,18 @@ def test_expired_refresh_token_is_rejected():
     assert decode_token(expired, secret="test-refresh-" + "b" * 40) == {}
 
 
+def test_jwt_dependency_avoids_unfixed_python_jose_advisories():
+    backend_root = Path(__file__).resolve().parents[1]
+    requirements = (backend_root / "requirements.txt").read_text(encoding="utf-8")
+    security_source = (backend_root / "app/core/security.py").read_text(encoding="utf-8")
+    middleware_source = (backend_root / "app/middleware/auth.py").read_text(encoding="utf-8")
+
+    assert "PyJWT[crypto]" in requirements
+    assert "python-jose" not in requirements
+    assert "from jose" not in security_source
+    assert "from jose" not in middleware_source
+
+
 def test_sensitive_request_and_auth_debug_logging_is_absent():
     backend_root = Path(__file__).resolve().parents[1]
     for relative_path in ("app/main.py", "app/middleware/auth.py"):
