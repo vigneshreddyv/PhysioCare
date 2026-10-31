@@ -4,7 +4,7 @@ import api from '../../services/api';
 import { useAuth } from '../../context/useAuth';
 import { useNavigate } from 'react-router-dom';
 
-export default function Navbar({ onMenuToggle, menuOpen = false }) {
+export default function Navbar({ onMenuToggle, menuOpen = false, menuButtonRef }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -51,10 +51,12 @@ export default function Navbar({ onMenuToggle, menuOpen = false }) {
       <div className="flex items-center gap-4">
         {/* Mobile Sidebar Toggle Button */}
         <button 
+          ref={menuButtonRef}
           onClick={onMenuToggle}
           className="portal-icon-button md:hidden"
           aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'}
           aria-expanded={menuOpen}
+          aria-controls="portal-sidebar"
         >
           <span className="material-symbols-outlined" aria-hidden="true">{menuOpen ? 'close' : 'menu'}</span>
         </button>

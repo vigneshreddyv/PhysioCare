@@ -3,11 +3,13 @@ import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/useAuth';
 import PatientIcon from '../components/common/PatientIcon';
+import useRouteMainFocus from '../utils/useRouteMainFocus';
 
 export default function PatientLayout() {
   const { user, logout, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  useRouteMainFocus('patient-main');
 
   const handleLogout = async () => {
     queryClient.clear();

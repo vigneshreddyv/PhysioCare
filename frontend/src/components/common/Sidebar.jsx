@@ -71,7 +71,7 @@ export default function Sidebar({ className = '', onNavigate, onClose }) {
         : '/doctor/dashboard';
 
   return (
-    <aside className={`portal-sidebar h-screen w-64 fixed left-0 top-0 z-50 flex flex-col py-stack-lg px-stack-md ${className}`} aria-label={`${role} portal navigation`}>
+    <aside id="portal-sidebar" className={`portal-sidebar h-screen w-64 fixed left-0 top-0 z-50 flex flex-col py-stack-lg px-stack-md ${className}`} aria-label={`${role} portal navigation`}>
       {/* Brand Header */}
       <div className="portal-sidebar__brand mb-stack-lg px-3 flex items-center gap-3">
         <div className="portal-sidebar__mark w-11 h-11 rounded-2xl flex items-center justify-center shrink-0">
@@ -81,7 +81,7 @@ export default function Sidebar({ className = '', onNavigate, onClose }) {
           <h1 className="font-headline-md text-headline-md font-bold">PhysioCare</h1>
           <p className="font-label-sm text-label-sm uppercase tracking-wider">{role} workspace</p>
         </div>
-        <button type="button" onClick={onClose} className="portal-sidebar__close md:hidden" aria-label="Close navigation menu">
+        <button type="button" onClick={onClose} className="portal-sidebar__close md:hidden" aria-label="Close navigation menu" data-sidebar-close>
           <span className="material-symbols-outlined" aria-hidden="true">close</span>
         </button>
       </div>

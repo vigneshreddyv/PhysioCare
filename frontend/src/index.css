@@ -4487,6 +4487,25 @@
   outline: none;
 }
 
+.portal-skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 10px;
+  left: 12px;
+  padding: 10px 14px;
+  transform: translateY(-160%);
+  border-radius: 8px;
+  color: #083d4b;
+  background: #fff;
+  font-weight: 750;
+  box-shadow: 0 8px 24px rgb(0 20 28 / 24%);
+  transition: transform 160ms ease;
+}
+
+.portal-skip-link:focus {
+  transform: translateY(0);
+}
+
 .portal-sidebar {
   color: #e9fbf8;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -4857,6 +4876,15 @@
 }
 
 @media (max-width: 767px) {
+  .portal-sidebar--closed {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .portal-sidebar--open {
+    visibility: visible;
+  }
+
   .portal-main {
     padding: 18px 14px 88px;
   }

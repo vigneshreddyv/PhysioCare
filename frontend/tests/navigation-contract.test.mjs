@@ -417,6 +417,34 @@ test('modal traps keyboard focus, closes with escape, and restores focus', async
 });
 
 
+test('portal navigation supports skip links, route focus, and an inaccessible closed drawer', async () => {
+  const [adminLayout, doctorLayout, patientLayout, sidebarHook, routeFocusHook, navbar, sidebar, css] = await Promise.all([
+    source('src/layouts/AdminLayout.jsx'),
+    source('src/layouts/DoctorLayout.jsx'),
+    source('src/layouts/PatientLayout.jsx'),
+    source('src/utils/usePortalSidebar.js'),
+    source('src/utils/useRouteMainFocus.js'),
+    source('src/components/common/Navbar.jsx'),
+    source('src/components/common/Sidebar.jsx'),
+    source('src/index.css'),
+  ]);
+
+  for (const layoutSource of [adminLayout, doctorLayout]) {
+    assert.match(layoutSource, /href="#portal-main">Skip to main content/);
+    assert.match(layoutSource, /useRouteMainFocus\('portal-main'\)/);
+    assert.match(layoutSource, /portal-sidebar--closed/);
+  }
+  assert.match(patientLayout, /useRouteMainFocus\('patient-main'\)/);
+  assert.match(routeFocusHook, /document\.getElementById\(mainId\)\?\.focus\(\)/);
+  assert.match(sidebarHook, /event\.key === 'Escape'/);
+  assert.match(sidebarHook, /menuButtonRef\.current\?\.focus\(\)/);
+  assert.match(sidebarHook, /\[data-sidebar-close\]/);
+  assert.match(navbar, /aria-controls="portal-sidebar"/);
+  assert.match(sidebar, /id="portal-sidebar"/);
+  assert.match(css, /\.portal-sidebar--closed\s*\{[\s\S]*?visibility:\s*hidden/);
+});
+
+
 test('role screens are route-split with accessible loading and recovery states', async () => {
   const appSource = await source('src/App.jsx');
 
