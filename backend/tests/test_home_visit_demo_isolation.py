@@ -71,14 +71,14 @@ def test_missing_home_visit_demo_configuration_does_not_fall_back_to_normal_defa
         )
 
 
-def test_normal_configuration_remains_unchanged():
+def test_normal_test_configuration_uses_dedicated_development_database():
     configured = Settings(
         _env_file=None,
         JWT_SECRET="n" * 40,
         JWT_REFRESH_SECRET="s" * 40,
     )
 
-    assert configured.DATABASE_NAME == "physiocare"
+    assert configured.DATABASE_NAME == "physiocare_dev"
     assert configured.PORT == 8000
     assert configured.HOME_VISIT_DEMO_MODE is False
 
@@ -100,6 +100,7 @@ def test_lab_demo_configuration_remains_unchanged():
         RAZORPAY_WEBHOOK_SECRET="",
         PAYMENT_RECONCILIATION_ENABLED=False,
         LAB_REPORT_STORAGE_DIR=str(lab_demo_home() / "lab-reports"),
+        LAB_REPORT_QUARANTINE_DIR=str(lab_demo_home() / "lab-report-quarantine"),
         CORS_ORIGINS=["http://127.0.0.1:5175"],
     )
 

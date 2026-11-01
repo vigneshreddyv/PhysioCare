@@ -89,9 +89,32 @@ from app.services.auth_service import AuthService
 from app.services.user_service import UserService
 from app.services.home_visit_service import HomeVisitService
 from app.services.lab_request_service import LabRequestService
+from app.services.clinical_report_storage import LabReportStorage
+from app.services.pdf_malware_scanner import (
+    DeterministicTestPdfScanner,
+    ScanVerdict,
+    UnavailablePdfMalwareScanner,
+)
 from app.services.doctor_history_service import DoctorHistoryService
 from app.services.clinician_schedule_service import ClinicianScheduleService
 from app.repositories.user_repository import UserRepository
+
+
+LAB_VALID_PDF = b"%PDF-1.4\nfictional laboratory report\n%%EOF\n"
+
+
+@pytest.fixture(autouse=True)
+def approved_lab_test_scanner(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        settings,
+        "LAB_REPORT_QUARANTINE_DIR",
+        str(tmp_path.parent / f"{tmp_path.name}-lab-report-quarantine"),
+    )
+    monkeypatch.setattr(
+        LabReportStorage,
+        "scanner",
+        DeterministicTestPdfScanner(ScanVerdict.CLEAN),
+    )
 
 
 def route_for(router, path, method):
@@ -1425,7 +1448,7 @@ def test_doctor_cannot_list_or_update_pending_capacity_reservations(monkeypatch)
             "doctor-user",
             "doctor",
         ))
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
 
 
 def test_home_visit_role_responses_minimize_fields(monkeypatch):
@@ -1541,6 +1564,29 @@ def test_jwt_configuration_is_required_and_secrets_must_differ(monkeypatch):
         _env_file=None,
     )
     assert production.cookie_secure is True
+    staging = Settings(
+        JWT_SECRET="a" * 40,
+        JWT_REFRESH_SECRET="b" * 40,
+        ENVIRONMENT="staging",
+        STAGING_INSTANCE_ID="physiocare-isolated-staging",
+        MONGODB_URL=(
+            "mongodb://staging-user:staging-password@staging-db.example.invalid:27017/"
+            "physiocare_staging?authSource=admin&tls=true"
+        ),
+        DATABASE_NAME="physiocare_staging",
+        STAGING_DATABASE_HOST="staging-db.example.invalid",
+        STAGING_DATABASE_NAME="physiocare_staging",
+        STAGING_STORAGE_ROOT="/tmp/physiocare-staging-contract",
+        LAB_REPORT_STORAGE_DIR="/tmp/physiocare-staging-contract/lab-reports",
+        LAB_REPORT_QUARANTINE_DIR="/tmp/physiocare-staging-contract/lab-quarantine",
+        CLINICAL_REPORT_STORAGE_DIR="/tmp/physiocare-staging-contract/clinical-reports",
+        CLINICAL_REPORT_QUARANTINE_DIR="/tmp/physiocare-staging-contract/clinical-quarantine",
+        CORS_ORIGINS=["https://staging.example.invalid"],
+        TRUSTED_PROXY_NETWORKS=["192.0.2.0/24"],
+        PAYMENT_RECONCILIATION_ENABLED=False,
+        _env_file=None,
+    )
+    assert staging.cookie_secure is True
 
 
 def test_invalid_token_is_generic_and_not_logged(capsys):
@@ -1666,7 +1712,7 @@ def test_unassigned_doctor_cannot_update_appointment(monkeypatch):
             )
         )
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
     appointment.save.assert_not_awaited()
 
 
@@ -2297,7 +2343,7 @@ def test_patient_cancellation_is_idempotent_and_enforces_ownership(monkeypatch):
         asyncio.run(
             AppointmentService.cancel_patient_appointment("appointment-id", "patient-user")
         )
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
 
 
 def test_concurrent_patient_cancellation_repeats_are_idempotent(monkeypatch):
@@ -2413,7 +2459,7 @@ def test_patient_cannot_read_another_patients_released_report(monkeypatch):
             "patient",
         ))
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
 
 
 def _lab_request_double(**overrides):
@@ -2472,7 +2518,7 @@ def test_finalized_report_is_written_privately_with_sanitized_metadata(monkeypat
     result = asyncio.run(LabRequestService.upload_finalized_report(
         str(request.id),
         str(request.assigned_laboratorian_user_id),
-        b"%PDF-1.4 fictional",
+        LAB_VALID_PDF,
         "../unsafe<script> report.pdf",
     ))
 
@@ -2486,7 +2532,90 @@ def test_finalized_report_is_written_privately_with_sanitized_metadata(monkeypat
     assert saved["expected_storage_key"] is None
     assert saved["file_name"] == "unsafe_script_ report.pdf"
     assert saved["content_type"] == "application/pdf"
-    assert saved["size_bytes"] == len(b"%PDF-1.4 fictional")
+    assert saved["size_bytes"] == len(LAB_VALID_PDF)
+
+
+def test_laboratory_report_fails_closed_when_scanner_is_unavailable(monkeypatch, tmp_path):
+    request = _lab_request_double()
+    quarantine = tmp_path.parent / f"{tmp_path.name}-quarantine"
+    save = AsyncMock()
+    monkeypatch.setattr(LabRequestRepository, "get", AsyncMock(return_value=request))
+    monkeypatch.setattr(LabRequestRepository, "save_finalized_report", save)
+    monkeypatch.setattr(settings, "LAB_REPORT_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "LAB_REPORT_QUARANTINE_DIR", str(quarantine))
+    monkeypatch.setattr(settings, "LAB_REPORT_MAX_BYTES", 1024)
+    monkeypatch.setattr(LabReportStorage, "scanner", UnavailablePdfMalwareScanner())
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            LabRequestService.upload_finalized_report(
+                str(request.id),
+                str(request.assigned_laboratorian_user_id),
+                LAB_VALID_PDF,
+                "report.pdf",
+            )
+        )
+
+    assert error.value.status_code == 503
+    save.assert_not_awaited()
+    assert list(tmp_path.glob("*.pdf")) == []
+    assert list(quarantine.glob("*.pdf")) == []
+    audits = list(quarantine.glob("*.audit.json"))
+    assert len(audits) == 1
+    assert json.loads(audits[0].read_text(encoding="utf-8"))["state"] == "Rejected"
+
+
+def test_laboratory_report_database_failure_defers_cleanup_until_reference_check(monkeypatch, tmp_path):
+    request = _lab_request_double()
+    monkeypatch.setattr(LabRequestRepository, "get", AsyncMock(return_value=request))
+    monkeypatch.setattr(
+        LabRequestRepository,
+        "save_finalized_report",
+        AsyncMock(side_effect=RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(settings, "LAB_REPORT_STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "LAB_REPORT_MAX_BYTES", 1024)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        asyncio.run(
+            LabRequestService.upload_finalized_report(
+                str(request.id),
+                str(request.assigned_laboratorian_user_id),
+                LAB_VALID_PDF,
+                "report.pdf",
+            )
+        )
+
+    retained_files = list(tmp_path.glob("*.pdf"))
+    assert len(retained_files) == 1
+    assert LabReportStorage.pending_cleanup_inventory()[0][0] == retained_files[0].name
+    unreferenced = AsyncMock(return_value=False)
+    counts = asyncio.run(
+        LabReportStorage.reconcile_pending_cleanup(unreferenced, min_age_seconds=0)
+    )
+    assert counts["removed"] == 1
+    unreferenced.assert_awaited_once_with(retained_files[0].name)
+    assert list(tmp_path.glob("*.pdf")) == []
+
+
+def test_laboratory_report_rejects_non_pdf_filename_before_scanning(monkeypatch):
+    request = _lab_request_double()
+    save = AsyncMock()
+    monkeypatch.setattr(LabRequestRepository, "get", AsyncMock(return_value=request))
+    monkeypatch.setattr(LabRequestRepository, "save_finalized_report", save)
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            LabRequestService.upload_finalized_report(
+                str(request.id),
+                str(request.assigned_laboratorian_user_id),
+                LAB_VALID_PDF,
+                "report.txt",
+            )
+        )
+
+    assert error.value.status_code == 415
+    save.assert_not_awaited()
 
 
 def test_losing_concurrent_report_replacement_removes_new_file(monkeypatch, tmp_path):
@@ -2504,7 +2633,7 @@ def test_losing_concurrent_report_replacement_removes_new_file(monkeypatch, tmp_
         asyncio.run(LabRequestService.upload_finalized_report(
             str(request.id),
             str(request.assigned_laboratorian_user_id),
-            b"%PDF-1.4 fictional",
+            LAB_VALID_PDF,
             "replacement.pdf",
         ))
 
@@ -2562,7 +2691,7 @@ def test_previous_laboratorian_loses_draft_access_after_reassignment(monkeypatch
             str(request.id), "507f1f77bcf86cd799439012", "laboratorian"
         ))
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
 
 
 def test_released_report_cannot_be_reassigned(monkeypatch):
@@ -2739,7 +2868,7 @@ def test_unassigned_doctor_cannot_download_published_report(monkeypatch, tmp_pat
     with pytest.raises(HTTPException) as error:
         asyncio.run(LabRequestService.get_report_file(str(request.id), "doctor-user", "doctor"))
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
 
 
 def test_upload_route_rejects_malformed_content_length(monkeypatch):

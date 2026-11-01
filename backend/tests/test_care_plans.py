@@ -107,7 +107,9 @@ async def test_create_care_plan_success():
             recommendations=[],
             start_date=utc_now(),
             target_date=utc_now() + timedelta(days=30),
-            status="active"
+            status="active",
+            actor_user_id="admin-user",
+            actor_role="admin",
         )
         assert res.id == "cp123"
 
@@ -129,7 +131,9 @@ async def test_nonexistent_patient_rejected():
                 recommendations=[],
                 start_date=utc_now(),
                 target_date=utc_now() + timedelta(days=30),
-                status="active"
+                status="active",
+                actor_user_id="admin-user",
+                actor_role="admin",
             )
         assert "Target patient profile not found" in str(exc_info.value)
 
@@ -152,7 +156,9 @@ async def test_invalid_stage_status_rejected():
                 recommendations=[],
                 start_date=utc_now(),
                 target_date=utc_now() + timedelta(days=30),
-                status="active"
+                status="active",
+                actor_user_id="admin-user",
+                actor_role="admin",
             )
         assert "Invalid stage status" in str(exc_info.value)
 
@@ -175,7 +181,9 @@ async def test_invalid_care_plan_status_rejected():
                 recommendations=[],
                 start_date=utc_now(),
                 target_date=utc_now() + timedelta(days=30),
-                status="invalid_status"
+                status="invalid_status",
+                actor_user_id="admin-user",
+                actor_role="admin",
             )
         assert "Invalid care plan status" in str(exc_info.value)
 
@@ -282,7 +290,9 @@ async def test_update_care_plan_success():
         # Update title and status
         updated = await CarePlanService.update_care_plan(
             "cp123",
-            {"title": "Updated Title", "status": "completed"}
+            {"title": "Updated Title", "status": "completed"},
+            actor_user_id="admin-user",
+            actor_role="admin",
         )
         assert updated is not None
         assert mock_cp.title == "Updated Title"
@@ -293,7 +303,12 @@ async def test_update_care_plan_success():
 async def test_update_care_plan_not_found():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = None
-        res = await CarePlanService.update_care_plan("nonexistent", {"title": "Updated"})
+        res = await CarePlanService.update_care_plan(
+            "nonexistent",
+            {"title": "Updated"},
+            actor_user_id="admin-user",
+            actor_role="admin",
+        )
         assert res is None
 
 
@@ -312,7 +327,9 @@ async def test_update_care_plan_partial_does_not_erase():
         # Update title only, nested items should not be erased
         updated = await CarePlanService.update_care_plan(
             "cp123",
-            {"title": "Updated Title Only"}
+            {"title": "Updated Title Only"},
+            actor_user_id="admin-user",
+            actor_role="admin",
         )
         assert updated is not None
         assert mock_cp.title == "Updated Title Only"
@@ -335,7 +352,9 @@ async def test_update_care_plan_immutable_fields():
         with pytest.raises(ValueError) as exc_info:
             await CarePlanService.update_care_plan(
                 "cp123",
-                {"patient_id": "999999999999999999999999"}
+                {"patient_id": "999999999999999999999999"},
+                actor_user_id="admin-user",
+                actor_role="admin",
             )
         assert "Modifying patient_id is not allowed" in str(exc_info.value)
 
@@ -343,7 +362,9 @@ async def test_update_care_plan_immutable_fields():
         with pytest.raises(ValueError) as exc_info:
             await CarePlanService.update_care_plan(
                 "cp123",
-                {"therapist_id": "999999999999999999999999"}
+                {"therapist_id": "999999999999999999999999"},
+                actor_user_id="admin-user",
+                actor_role="admin",
             )
         assert "Modifying therapist_id is not allowed" in str(exc_info.value)
 
@@ -367,7 +388,7 @@ async def test_stage_upcoming_to_active():
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_stage_status("cp123", "st1", "active", "111111111111111111111111")
+        res = await CarePlanService.update_stage_status("cp123", "st1", "active", "111111111111111111111111", "admin")
         assert res is not None
         assert stage.status == "active"
 
@@ -391,7 +412,7 @@ async def test_stage_active_to_completed(mock_notification_create_globally):
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111")
+        res = await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111", "admin")
         assert res is not None
         assert stage.status == "completed"
         mock_notification_create_globally.assert_called_once()
@@ -408,7 +429,7 @@ async def test_invalid_stage_skip():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = mock_cp
         with pytest.raises(ValueError) as exc:
-            await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111")
+            await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111", "admin")
         assert "Upcoming stages can only transition to active" in str(exc.value)
 
 
@@ -423,7 +444,7 @@ async def test_invalid_stage_reverse_transition():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = mock_cp
         with pytest.raises(ValueError) as exc:
-            await CarePlanService.update_stage_status("cp123", "st1", "active", "111111111111111111111111")
+            await CarePlanService.update_stage_status("cp123", "st1", "active", "111111111111111111111111", "admin")
         assert "Completed stages cannot be modified" in str(exc.value)
 
 
@@ -439,7 +460,7 @@ async def test_multiple_active_stages_rejected():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = mock_cp
         with pytest.raises(ValueError) as exc:
-            await CarePlanService.update_stage_status("cp123", "st2", "active", "111111111111111111111111")
+            await CarePlanService.update_stage_status("cp123", "st2", "active", "111111111111111111111111", "admin")
         assert "A care plan can only have one active stage at a time" in str(exc.value)
 
 
@@ -454,7 +475,7 @@ async def test_completed_plan_cannot_progress():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = mock_cp
         with pytest.raises(ValueError) as exc:
-            await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111")
+            await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111", "admin")
         assert "Cannot modify stages of a cancelled or completed care plan" in str(exc.value)
 
 
@@ -469,7 +490,12 @@ async def test_complete_plan_with_unfinished_stages_rejected():
     with patch("app.services.care_plan_service.CarePlanRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = mock_cp
         with pytest.raises(ValueError) as exc:
-            await CarePlanService.update_care_plan("cp123", {"status": "completed"})
+            await CarePlanService.update_care_plan(
+                "cp123",
+                {"status": "completed"},
+                actor_user_id="admin-user",
+                actor_role="admin",
+            )
         assert "All stages must be completed before the care plan can transition to completed" in str(exc.value)
 
 
@@ -491,7 +517,12 @@ async def test_complete_plan_success(mock_notification_create_globally):
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_care_plan("cp123", {"status": "completed"})
+        res = await CarePlanService.update_care_plan(
+            "cp123",
+            {"status": "completed"},
+            actor_user_id="admin-user",
+            actor_role="admin",
+        )
         assert res is not None
         assert mock_cp.status == "completed"
         mock_notification_create_globally.assert_called_once()
@@ -516,7 +547,7 @@ async def test_goal_progress_update():
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_goal_progress("cp123", "g1", 50.0, "active", "111111111111111111111111")
+        res = await CarePlanService.update_goal_progress("cp123", "g1", 50.0, "active", "111111111111111111111111", "admin")
         assert res is not None
         assert goal.progress_value == 50.0
 
@@ -524,8 +555,20 @@ async def test_goal_progress_update():
 @pytest.mark.asyncio
 async def test_negative_goal_progress_rejected():
     with pytest.raises(ValueError) as exc:
-        await CarePlanService.update_goal_progress("cp123", "g1", -10.0, "active", "111111111111111111111111")
+        await CarePlanService.update_goal_progress("cp123", "g1", -10.0, "active", "111111111111111111111111", "admin")
     assert "Progress value cannot be negative" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_stage_and_goal_mutations_require_explicit_actor_role():
+    with pytest.raises(TypeError, match="actor_role"):
+        await CarePlanService.update_stage_status(
+            "cp123", "st1", "active", "111111111111111111111111"
+        )
+    with pytest.raises(TypeError, match="actor_role"):
+        await CarePlanService.update_goal_progress(
+            "cp123", "g1", 50.0, "active", "111111111111111111111111"
+        )
 
 
 @pytest.mark.asyncio
@@ -547,7 +590,7 @@ async def test_goal_achievement(mock_notification_create_globally):
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_goal_progress("cp123", "g1", 100.0, "achieved", "111111111111111111111111")
+        res = await CarePlanService.update_goal_progress("cp123", "g1", 100.0, "achieved", "111111111111111111111111", "admin")
         assert res is not None
         assert goal.status == "achieved"
         mock_notification_create_globally.assert_called_once()
@@ -601,7 +644,7 @@ async def test_current_stage_synchronization():
         mock_cp.save = AsyncMock()
         mock_pat_get.return_value = MagicMock()
 
-        res = await CarePlanService.update_stage_status("cp123", "st2", "active", "111111111111111111111111")
+        res = await CarePlanService.update_stage_status("cp123", "st2", "active", "111111111111111111111111", "admin")
         assert res is not None
         assert mock_cp.current_stage == 2
 

@@ -1,7 +1,7 @@
 import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from beanie import PydanticObjectId
 from fastapi import HTTPException
@@ -62,6 +62,22 @@ def install_refresh_context(monkeypatch, session, user=None):
         "get_by_id",
         AsyncMock(return_value=user or make_user()),
     )
+
+
+@pytest.mark.asyncio
+async def test_unknown_account_login_still_verifies_a_password_hash(monkeypatch):
+    monkeypatch.setattr(
+        auth_service.UserRepository,
+        "get_by_email",
+        AsyncMock(return_value=None),
+    )
+    verify = Mock(return_value=False)
+    monkeypatch.setattr(auth_service, "verify_password", verify)
+    with pytest.raises(HTTPException) as error:
+        await AuthService.login("missing@example.test", "wrong-password")
+    assert error.value.status_code == 401
+    assert error.value.detail == "Incorrect email or password"
+    verify.assert_called_once_with("wrong-password", auth_service._UNKNOWN_ACCOUNT_HASH)
 
 
 @pytest.mark.asyncio

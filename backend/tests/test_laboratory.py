@@ -4,7 +4,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock
 from fastapi import HTTPException
 
-from app.core.config import settings
 from app.core.time import utc_now
 from app.models.laboratory_test import LaboratoryTest
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
@@ -14,25 +13,11 @@ from app.api.laboratory import update_laboratory_booking_status
 from app.schemas.laboratory_booking import LaboratoryBookingStatusUpdate
 
 
-# Override the database name for testing
-settings.DATABASE_NAME = "test_physiocare"
-
-
 @pytest.mark.asyncio
 async def test_unassigned_doctor_cannot_update_laboratory_booking_status(
     monkeypatch,
 ):
-    booking = MagicMock()
-    booking.patient_id = "000000000000000000000000"
-    monkeypatch.setattr(
-        "app.api.laboratory.LaboratoryBookingRepository.get_by_id",
-        AsyncMock(return_value=booking),
-    )
-    monkeypatch.setattr(
-        "app.api.laboratory.require_doctor_patient_access",
-        AsyncMock(side_effect=PermissionError("not assigned")),
-    )
-    update = AsyncMock()
+    update = AsyncMock(side_effect=PermissionError("not assigned"))
     monkeypatch.setattr(LaboratoryService, "update_booking_status", update)
 
     with pytest.raises(HTTPException) as error:
@@ -42,8 +27,9 @@ async def test_unassigned_doctor_cannot_update_laboratory_booking_status(
             MagicMock(role="doctor", id="doctor-user-id"),
         )
 
-    assert error.value.status_code == 403
-    update.assert_not_awaited()
+    assert error.value.status_code == 404
+    assert error.value.detail == "Booking not found"
+    update.assert_awaited_once()
 
 
 def test_laboratory_test_creation():
@@ -414,13 +400,17 @@ async def test_update_booking_status_admin_doctor_transitions():
         mock_patient_get.return_value = None  # No notification side-effects
 
         # confirmed -> completed
-        updated = await LaboratoryService.update_booking_status("booking123", "completed")
+        updated = await LaboratoryService.update_booking_status(
+            "booking123", "completed", actor_user_id="admin-user", actor_role="admin"
+        )
         assert updated.status == "completed"
 
         # Reset status to confirmed for cancellation test
         mock_booking.status = "confirmed"
         # confirmed -> cancelled
-        updated = await LaboratoryService.update_booking_status("booking123", "cancelled")
+        updated = await LaboratoryService.update_booking_status(
+            "booking123", "cancelled", actor_user_id="admin-user", actor_role="admin"
+        )
         assert updated.status == "cancelled"
 
 
@@ -434,19 +424,25 @@ async def test_update_booking_status_invalid_transitions():
 
         # pending_payment -> completed (fails)
         with pytest.raises(ValueError) as exc_info:
-            await LaboratoryService.update_booking_status("booking123", "completed")
+            await LaboratoryService.update_booking_status(
+                "booking123", "completed", actor_user_id="admin-user", actor_role="admin"
+            )
         assert "Transition from 'pending_payment' to 'completed' is not allowed" in str(exc_info.value)
 
         # completed -> cancelled (fails)
         mock_booking.status = "completed"
         with pytest.raises(ValueError) as exc_info:
-            await LaboratoryService.update_booking_status("booking123", "cancelled")
+            await LaboratoryService.update_booking_status(
+                "booking123", "cancelled", actor_user_id="admin-user", actor_role="admin"
+            )
         assert "Transition from 'completed' to 'cancelled' is not allowed" in str(exc_info.value)
 
         # cancelled -> confirmed (fails)
         mock_booking.status = "cancelled"
         with pytest.raises(ValueError) as exc_info:
-            await LaboratoryService.update_booking_status("booking123", "confirmed")
+            await LaboratoryService.update_booking_status(
+                "booking123", "confirmed", actor_user_id="admin-user", actor_role="admin"
+            )
         assert "Transition from 'cancelled' to 'confirmed' is not allowed" in str(exc_info.value)
 
 
@@ -454,5 +450,7 @@ async def test_update_booking_status_invalid_transitions():
 async def test_update_booking_status_not_found():
     with patch("app.services.laboratory_service.LaboratoryBookingRepository.get_by_id") as mock_get_by_id:
         mock_get_by_id.return_value = None
-        res = await LaboratoryService.update_booking_status("nonexistent", "completed")
+        res = await LaboratoryService.update_booking_status(
+            "nonexistent", "completed", actor_user_id="admin-user", actor_role="admin"
+        )
         assert res is None

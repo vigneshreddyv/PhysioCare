@@ -1,11 +1,12 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
-from app.core.config import settings
+from app.core.config import DEVELOPMENT_DATABASE_NAME, settings
 from app.models.user import User
 from app.models.patient import Patient
 from app.models.doctor import Doctor
 from app.models.appointment import Appointment
 from app.models.auth_session import AuthSession
+from app.models.auth_rate_limit import AuthRateLimitBucket
 from app.models.demo_entitlement import DemoEntitlement
 from app.models.home_visit_request import HomeVisitRequest
 from app.models.lab_request import LabRequest
@@ -26,17 +27,28 @@ class BeanieCompatibleMotorClient(AsyncIOMotorClient):
         pass
 
 async def init_db():
-    settings.validate_lab_demo_isolation()
-    settings.validate_home_visit_demo_isolation()
-    client = BeanieCompatibleMotorClient(settings.MONGODB_URL)
+    settings.validate_runtime_startup()
+    ordinary_development = settings.ENVIRONMENT == "development" and not (
+        settings.LAB_DEMO_MODE or settings.HOME_VISIT_DEMO_MODE
+    )
+    client = (
+        BeanieCompatibleMotorClient(
+            settings.development_mongodb_url(), directConnection=True
+        )
+        if ordinary_development
+        else BeanieCompatibleMotorClient(settings.MONGODB_URL)
+    )
     await init_beanie(
-        database=client[settings.DATABASE_NAME],
+        database=client[
+            DEVELOPMENT_DATABASE_NAME if ordinary_development else settings.DATABASE_NAME
+        ],
         document_models=[
             User,
             Patient,
             Doctor,
             Appointment,
             AuthSession,
+            AuthRateLimitBucket,
             DemoEntitlement,
             HomeVisitRequest,
             LabRequest,

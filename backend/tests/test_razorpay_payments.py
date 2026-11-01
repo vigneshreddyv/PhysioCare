@@ -2,6 +2,7 @@ import asyncio
 import json
 import threading
 from datetime import datetime
+from hashlib import sha256
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -51,6 +52,13 @@ def configured_test_mode(monkeypatch):
     monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "unit-test-secret")
     monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "unit-webhook-secret")
     monkeypatch.setattr(settings, "APPOINTMENT_BILLING_CURRENCY", "INR")
+
+
+def configured_worker_test_mode(monkeypatch):
+    configured_test_mode(monkeypatch)
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PAYMENT_RECONCILIATION_ENABLED", True)
 
 
 class InMemoryCollection:
@@ -134,6 +142,14 @@ def test_payment_indexes_have_distinct_names_and_reconciliation_keys():
         ("reconciliation_status", 1),
         ("updated_at", 1),
     ]
+    body_index = next(
+        index for index in RazorpayWebhookEvent.Settings.indexes
+        if index.document["name"] == "unique_razorpay_webhook_body_digest"
+    )
+    assert body_index.document["unique"] is True
+    assert body_index.document["partialFilterExpression"] == {
+        "body_digest": {"$type": "string"}
+    }
 
 
 
@@ -441,7 +457,7 @@ async def test_duplicate_capture_finalization_is_idempotent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_admin_reconciliation_repairs_a_capture_after_interrupted_appointment_write(monkeypatch):
-    configured_test_mode(monkeypatch)
+    configured_worker_test_mode(monkeypatch)
     appointment_doc, attempt_doc, attempt, appointment_collection, _ = install_transition_fakes(monkeypatch)
     appointment_collection.update_one = AsyncMock(side_effect=RuntimeError("simulated process interruption"))
 
@@ -596,7 +612,7 @@ async def test_reconciliation_stops_before_next_record_when_lease_is_lost(monkey
 
 @pytest.mark.asyncio
 async def test_manual_and_worker_reconciliation_can_overlap_safely(monkeypatch):
-    configured_test_mode(monkeypatch)
+    configured_worker_test_mode(monkeypatch)
     appointment_doc, _, attempt, _, _ = install_transition_fakes(monkeypatch)
     attempt.status = "success"
     attempt.provider_payment_id = "pay_test_1"
@@ -675,7 +691,7 @@ async def test_reconciliation_continues_after_one_record_fails(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_worker_retries_temporary_failure_for_cancelled_capture(monkeypatch):
-    configured_test_mode(monkeypatch)
+    configured_worker_test_mode(monkeypatch)
     appointment_doc, _, attempt, _, _ = install_transition_fakes(
         monkeypatch, status="cancelled", billing_status="pending"
     )
@@ -937,6 +953,119 @@ async def test_processed_webhook_event_is_idempotent(monkeypatch):
 
     assert result == {"status": "duplicate"}
     attempt_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_replayed_signed_body_with_changed_header_creates_one_ledger_entry(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(RazorpayWebhookEvent, "get_pymongo_collection", MagicMock(return_value=MagicMock()))
+    ledger = {}
+
+    async def find_event(query):
+        return ledger.get(query["body_digest"])
+
+    async def insert_event(self):
+        ledger[self.body_digest] = self
+
+    async def save_event(self):
+        return self
+
+    monkeypatch.setattr(RazorpayWebhookEvent, "find_one", AsyncMock(side_effect=find_event))
+    monkeypatch.setattr(RazorpayWebhookEvent, "insert", insert_event)
+    monkeypatch.setattr(RazorpayWebhookEvent, "save", save_event)
+    attempt_lookup = AsyncMock(return_value=payment_attempt())
+    monkeypatch.setattr(PaymentAttempt, "find_one", attempt_lookup)
+    monkeypatch.setattr(PaymentService, "_verify_provider_payment", AsyncMock(return_value=captured_payment()))
+    apply_payment = AsyncMock(return_value="success")
+    monkeypatch.setattr(PaymentService, "_apply_provider_payment", apply_payment)
+
+    raw_body = captured_webhook_body()
+    first = await PaymentService.handle_webhook(raw_body, "synthetic-signature", "evt_original")
+    replay = await PaymentService.handle_webhook(raw_body, "synthetic-signature", "evt_changed")
+
+    assert first == {"status": "success"}
+    assert replay == {"status": "duplicate"}
+    assert list(ledger) == [sha256(raw_body).hexdigest()]
+    assert next(iter(ledger.values())).event_id == "evt_original"
+    attempt_lookup.assert_awaited_once()
+    apply_payment.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_same_header_for_different_signed_body_is_rejected(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(RazorpayWebhookEvent, "get_pymongo_collection", MagicMock(return_value=MagicMock()))
+    existing = SimpleNamespace(event_id="evt_original", body_digest="different-digest", status="processed")
+
+    async def find_event(query):
+        return existing if query == {"event_id": "evt_original"} else None
+
+    monkeypatch.setattr(RazorpayWebhookEvent, "find_one", AsyncMock(side_effect=find_event))
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "insert",
+        AsyncMock(side_effect=DuplicateKeyError("synthetic unique event ID collision")),
+    )
+    attempt_lookup = AsyncMock()
+    monkeypatch.setattr(PaymentAttempt, "find_one", attempt_lookup)
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(
+            captured_webhook_body(), "synthetic-signature", "evt_original"
+        )
+
+    assert error.value.status_code == 409
+    attempt_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_changed_header_replay_losing_digest_insert_is_duplicate(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    monkeypatch.setattr(RazorpayWebhookEvent, "get_pymongo_collection", MagicMock(return_value=MagicMock()))
+    processed = SimpleNamespace(status="processed")
+    lookup = AsyncMock(side_effect=[None, processed])
+    monkeypatch.setattr(RazorpayWebhookEvent, "find_one", lookup)
+    monkeypatch.setattr(
+        RazorpayWebhookEvent,
+        "insert",
+        AsyncMock(side_effect=DuplicateKeyError("synthetic body digest collision")),
+    )
+    attempt_lookup = AsyncMock()
+    monkeypatch.setattr(PaymentAttempt, "find_one", attempt_lookup)
+
+    raw_body = captured_webhook_body()
+    result = await PaymentService.handle_webhook(raw_body, "synthetic-signature", "evt_changed")
+
+    assert result == {"status": "duplicate"}
+    expected = {"body_digest": sha256(raw_body).hexdigest()}
+    assert lookup.await_args_list[0].args[0] == expected
+    assert lookup.await_args_list[1].args[0] == expected
+    attempt_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_signed_non_object_webhook_is_rejected_before_database_access(monkeypatch):
+    configured_test_mode(monkeypatch)
+    utility = MagicMock()
+    utility.utility.verify_webhook_signature.return_value = True
+    monkeypatch.setattr(PaymentService, "_client", MagicMock(return_value=utility))
+    lookup = AsyncMock()
+    monkeypatch.setattr(RazorpayWebhookEvent, "find_one", lookup)
+
+    with pytest.raises(HTTPException) as error:
+        await PaymentService.handle_webhook(b"[]", "synthetic-signature", "evt_malformed")
+
+    assert error.value.status_code == 400
+    lookup.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -672,28 +673,49 @@ class PaymentService:
             event = json.loads(raw_body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise HTTPException(status_code=400, detail="Webhook body is invalid") from exc
+        if not isinstance(event, dict):
+            raise HTTPException(status_code=400, detail="Webhook body is invalid")
 
-        entity = event.get("payload", {}).get("payment", {}).get("entity", {})
+        body_digest = hashlib.sha256(raw_body).hexdigest()
+        payload = event.get("payload")
+        payment_envelope = payload.get("payment") if isinstance(payload, dict) else None
+        entity = payment_envelope.get("entity") if isinstance(payment_envelope, dict) else None
+        entity = entity if isinstance(entity, dict) else {}
         order_id = entity.get("order_id")
         payment_id = entity.get("id")
         try:
             webhook_event = await RazorpayWebhookEvent.find_one(
-                {"event_id": event_id}
+                {"body_digest": body_digest}
             )
         except Exception as exc:
             raise PaymentService._webhook_retryable_error() from exc
         if webhook_event and webhook_event.status == "processed":
             return {"status": "duplicate"}
         if not webhook_event:
-            webhook_event = RazorpayWebhookEvent(event_id=event_id, provider_order_id=order_id)
+            webhook_event = RazorpayWebhookEvent(
+                event_id=event_id,
+                body_digest=body_digest,
+                provider_order_id=order_id,
+            )
             try:
                 await webhook_event.insert()
             except DuplicateKeyError:
                 try:
                     webhook_event = await RazorpayWebhookEvent.find_one(
-                        {"event_id": event_id}
+                        {"body_digest": body_digest}
                     )
+                    if not webhook_event:
+                        conflicting_header = await RazorpayWebhookEvent.find_one(
+                            {"event_id": event_id}
+                        )
+                        if conflicting_header:
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Webhook event identity conflicts with an earlier payload",
+                            )
                 except Exception as exc:
+                    if isinstance(exc, HTTPException):
+                        raise
                     raise PaymentService._webhook_retryable_error() from exc
                 if webhook_event and webhook_event.status == "processed":
                     return {"status": "duplicate"}

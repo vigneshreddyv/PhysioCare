@@ -46,9 +46,9 @@ export default function Register() {
       <div className="patient-register min-h-screen flex items-center justify-center p-4">
         <main className="patient-register__success" aria-labelledby="registration-complete-heading">
           <span className="material-symbols-outlined" aria-hidden="true">check_circle</span>
-          <p className="patient-page__eyebrow">Patient account created</p>
-          <h1 id="registration-complete-heading">You can now sign in.</h1>
-          <p>Your account was created as a patient account. No appointment has been booked yet.</p>
+          <p className="patient-page__eyebrow">Registration received</p>
+          <h1 id="registration-complete-heading">Continue to sign in.</h1>
+          <p>If registration could be completed, the patient account is ready. For privacy, this page does not confirm whether an email was already registered.</p>
           <Link to="/login" state={location.state}>Continue to sign in</Link>
         </main>
       </div>

@@ -273,8 +273,8 @@ class AppointmentService:
                 or getattr(appointment, "doctor_assignment_pending", False)
             ):
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Doctors may update only their assigned appointments",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Appointment not found",
                 )
             if schema.billing_status is not None or schema.billing_amount is not None:
                 raise HTTPException(
@@ -390,8 +390,8 @@ class AppointmentService:
             )
         if str(appointment.patient_id) != str(patient.id):
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You may cancel only your own appointments",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Appointment not found",
             )
         if appointment.status == "cancelled":
             await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)

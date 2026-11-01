@@ -17,6 +17,15 @@ from app.repositories.profile_repository import ProfileRepository
 
 router = APIRouter(tags=["exercises"])
 
+
+def _scoped_denial(current_user: User, detail: str) -> HTTPException:
+    if current_user.role in {"doctor", "patient"}:
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Operation not permitted for this role",
+    )
+
 @router.get("/exercises", response_model=List[ExerciseResponse])
 async def list_exercises(
     current_user: User = Depends(get_current_user)
@@ -112,8 +121,8 @@ async def list_assignments(
         if current_user.role == "doctor":
             try:
                 await require_doctor_patient_access(str(current_user.id), patient_id)
-            except PermissionError as e:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+            except PermissionError:
+                raise _scoped_denial(current_user, "Patient not found") from None
         target_patient_id = patient_id
 
     assignments = await ExerciseService.list_assignments_for_patient(target_patient_id)
@@ -160,7 +169,7 @@ async def get_assignment(
         if not patient or str(assignment.patient_id) != str(patient.id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Assignment not found or unauthorized access"
+                detail="Assignment not found"
             )
     elif current_user.role == "doctor":
         from app.services.clinical_authorization import require_doctor_patient_access
@@ -168,8 +177,8 @@ async def get_assignment(
             await require_doctor_patient_access(
                 str(current_user.id), str(assignment.patient_id)
             )
-        except PermissionError as e:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except PermissionError:
+            raise _scoped_denial(current_user, "Assignment not found") from None
 
     return ExerciseAssignmentResponse(
         id=str(assignment.id),
@@ -220,8 +229,8 @@ async def create_assignment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except PermissionError:
+        raise _scoped_denial(current_user, "Patient not found") from None
 
 
 @router.patch("/exercise-assignments/{assignment_id}", response_model=ExerciseAssignmentResponse)
@@ -251,7 +260,7 @@ async def update_assignment(
         if not patient or str(assignment.patient_id) != str(patient.id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Assignment not found or unauthorized access"
+                detail="Assignment not found"
             )
 
     try:
@@ -281,11 +290,8 @@ async def update_assignment(
             assigned_at=updated.assigned_at,
             updated_at=updated.updated_at
         )
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
-        )
+    except PermissionError:
+        raise _scoped_denial(current_user, "Assignment not found") from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -326,11 +332,8 @@ async def create_progress(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
-        )
+    except PermissionError:
+        raise _scoped_denial(current_user, "Assignment not found") from None
 
 
 @router.get("/exercise-progress/stats", response_model=dict)
@@ -362,8 +365,8 @@ async def get_patient_stats_for_clinician(
         from app.services.clinical_authorization import require_doctor_patient_access
         try:
             await require_doctor_patient_access(str(current_user.id), patient_id)
-        except PermissionError as e:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except PermissionError:
+            raise _scoped_denial(current_user, "Patient not found") from None
     return await ExerciseService.get_exercise_progress_stats(patient_id)
 
 
@@ -413,8 +416,8 @@ async def list_progress_for_clinician(
         from app.services.clinical_authorization import require_doctor_patient_access
         try:
             await require_doctor_patient_access(str(current_user.id), patient_id)
-        except PermissionError as e:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except PermissionError:
+            raise _scoped_denial(current_user, "Patient not found") from None
     records = await ExerciseService.list_progress_for_patient(patient_id)
     return [
         ExerciseProgressResponse(

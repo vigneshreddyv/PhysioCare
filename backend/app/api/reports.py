@@ -5,8 +5,11 @@ from typing import List, Optional
 from app.models.user import User
 from app.middleware.auth import get_current_user, RoleChecker
 from app.schemas.report import ReportResponse, ReportCreate, ReportContentSchema
-from app.services.report_service import ReportService
-from app.services.clinical_authorization import require_doctor_patient_access
+from app.services.report_service import (
+    ReportBookingConflict,
+    ReportService,
+    ReportTargetUnavailable,
+)
 from app.services.clinical_report_storage import ClinicalReportStorage
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -116,23 +119,32 @@ async def create_report_by_admin(
             detail="Invalid report data payload",
         ) from None
 
-    if current_user.role == "doctor":
+    if current_user.role == "doctor" or report_create.booking_id:
         try:
-            await require_doctor_patient_access(str(current_user.id), report_create.patient_id)
-        except PermissionError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Doctor is not authorized to create a report for this patient.",
-            ) from exc
-        except Exception as exc:
+            await ReportService.validate_create_request(
+                patient_id=report_create.patient_id,
+                booking_id=report_create.booking_id,
+                category=report_create.category,
+                actor_user_id=str(current_user.id),
+                actor_role=current_user.role,
+            )
+        except ReportTargetUnavailable:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Patient not found",
-            ) from exc
+                detail="Report target not found",
+            ) from None
+        except ReportBookingConflict:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Laboratory booking is not available for this report",
+            ) from None
 
     storage_key = None
     if file:
-        storage_key = await ClinicalReportStorage.store_pdf(file)
+        storage_key = await ClinicalReportStorage.store_pdf(
+            file,
+            uploaded_by_user_id=str(current_user.id),
+        )
 
     try:
         report = await ReportService.create_report(
@@ -145,7 +157,21 @@ async def create_report_by_admin(
             therapist=report_create.therapist,
             content=report_create.content.model_dump(),
             file_path=storage_key,
+            actor_user_id=str(current_user.id),
+            actor_role=current_user.role,
         )
+    except ReportTargetUnavailable:
+        ClinicalReportStorage.delete(storage_key, reason_code="report_target_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report target not found",
+        ) from None
+    except ReportBookingConflict:
+        ClinicalReportStorage.delete(storage_key, reason_code="booking_conflict")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Laboratory booking is not available for this report",
+        ) from None
     except Exception:
         ClinicalReportStorage.delete(storage_key)
         raise

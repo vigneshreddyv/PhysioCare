@@ -96,7 +96,9 @@ async def test_assignment_creation_valid():
             "duration_seconds": 300,
             "frequency": "daily"
         }
-        res = await ExerciseService.create_assignment(assignment_data, "000000000000000000000004")
+        res = await ExerciseService.create_assignment(
+            assignment_data, "000000000000000000000004", "admin"
+        )
         assert res is not None
 
 
@@ -114,7 +116,9 @@ async def test_assignment_creation_missing_patient():
             "frequency": "daily"
         }
         with pytest.raises(ValueError) as exc:
-            await ExerciseService.create_assignment(assignment_data, "000000000000000000000004")
+            await ExerciseService.create_assignment(
+                assignment_data, "000000000000000000000004", "admin"
+            )
         assert "Patient does not exist" in str(exc.value)
 
 
@@ -139,7 +143,9 @@ async def test_assignment_creation_wrong_care_plan_owner():
             "frequency": "daily"
         }
         with pytest.raises(ValueError) as exc:
-            await ExerciseService.create_assignment(assignment_data, "000000000000000000000004")
+            await ExerciseService.create_assignment(
+                assignment_data, "000000000000000000000004", "admin"
+            )
         assert "belong to the specified patient" in str(exc.value)
 
 
@@ -170,7 +176,9 @@ async def test_assignment_creation_inactive_exercise_rejected():
             "frequency": "daily"
         }
         with pytest.raises(ValueError) as exc:
-            await ExerciseService.create_assignment(assignment_data, "000000000000000000000004")
+            await ExerciseService.create_assignment(
+                assignment_data, "000000000000000000000004", "admin"
+            )
         assert "Cannot assign an inactive exercise" in str(exc.value)
 
 
@@ -180,7 +188,8 @@ async def test_assignment_update_patient_restricted():
     mock_assignment.patient_id = PydanticObjectId("000000000000000000000001")
     mock_assignment.status = "assigned"
 
-    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment):
+    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment), \
+         patch("app.repositories.profile_repository.ProfileRepository.get_patient_by_user_id", return_value=MagicMock(id=mock_assignment.patient_id)):
         # Patient trying to modify prescription parameters (sets/reps) -> PermissionError
         with pytest.raises(PermissionError) as exc:
             await ExerciseService.update_assignment(
@@ -190,6 +199,29 @@ async def test_assignment_update_patient_restricted():
                 actor_user_id="000000000000000000000001"
             )
         assert "authorized to update the completion status" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_patient_role_cannot_create_exercise_assignment():
+    with pytest.raises(PermissionError, match="Explicit clinical actor context"):
+        await ExerciseService.create_assignment(
+            {"patient_id": "000000000000000000000001"},
+            "patient-user",
+            "patient",
+        )
+
+
+@pytest.mark.asyncio
+async def test_patient_cannot_update_another_patients_assignment_in_service():
+    assignment = MagicMock(patient_id=PydanticObjectId("000000000000000000000001"))
+    assignment.save = AsyncMock()
+    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=assignment), \
+         patch("app.repositories.profile_repository.ProfileRepository.get_patient_by_user_id", return_value=MagicMock(id=PydanticObjectId("000000000000000000000002"))):
+        with pytest.raises(PermissionError, match="Assignment is not available"):
+            await ExerciseService.update_assignment(
+                "assignment-id", {"status": "in_progress"}, "patient", "patient-user"
+            )
+    assignment.save.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -271,6 +303,7 @@ async def test_assignment_detail_rejects_non_clinical_authenticated_roles():
         await get_assignment("assignment_id", current_user)
 
     assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "You are not authorized to access exercise assignments."
 
 
 @pytest.mark.asyncio
@@ -287,7 +320,8 @@ async def test_doctor_progress_stats_rejects_unassigned_patient():
         with pytest.raises(HTTPException) as exc_info:
             await get_patient_stats_for_clinician("patient-id", current_user)
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Patient not found"
     mock_stats.assert_not_awaited()
 
 
@@ -305,7 +339,8 @@ async def test_doctor_progress_history_rejects_unassigned_patient():
         with pytest.raises(HTTPException) as exc_info:
             await list_progress_for_clinician("patient-id", current_user)
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Patient not found"
     mock_history.assert_not_awaited()
 
 
@@ -316,7 +351,8 @@ async def test_assignment_update_patient_lifecycle_ok():
     mock_assignment.status = "assigned"
     mock_assignment.save = AsyncMock()
 
-    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment):
+    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment), \
+         patch("app.repositories.profile_repository.ProfileRepository.get_patient_by_user_id", return_value=MagicMock(id=mock_assignment.patient_id)):
         # Patient modifying only status -> OK
         res = await ExerciseService.update_assignment(
             "assignment_id",
@@ -335,7 +371,8 @@ async def test_assignment_update_invalid_lifecycle_transition():
     mock_assignment.status = "assigned"
     mock_assignment.save = AsyncMock()
 
-    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment):
+    with patch("app.repositories.exercise_repository.ExerciseRepository.get_assignment_by_id", return_value=mock_assignment), \
+         patch("app.repositories.profile_repository.ProfileRepository.get_patient_by_user_id", return_value=MagicMock(id=mock_assignment.patient_id)):
         # assigned -> completed is not a direct status jump allowed (must pass through in_progress)
         with pytest.raises(ValueError) as exc:
             await ExerciseService.update_assignment(

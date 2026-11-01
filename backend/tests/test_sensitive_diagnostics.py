@@ -19,7 +19,7 @@ FAKE_SECRETS = {
 
 
 def make_settings() -> Settings:
-    return Settings(_env_file=None, **FAKE_SECRETS)
+    return Settings(_env_file=None, ENVIRONMENT="test", **FAKE_SECRETS)
 
 
 def test_secret_settings_inventory_is_explicit():
@@ -58,17 +58,28 @@ def test_settings_dump_and_json_redact_all_secrets():
 async def test_report_follow_up_failure_logs_category_without_exception_secret(caplog):
     secret = "patient@example.test bearer-secret"
     report = MagicMock(id="report-id")
+    booking = MagicMock(
+        patient_id="111111111111111111111111",
+        status="confirmed",
+    )
 
     with (
         patch(
-            "app.services.report_service.ReportRepository.create",
+            "app.services.report_service.ReportRepository.create_for_confirmed_booking",
             new=AsyncMock(return_value=report),
         ),
         patch(
-            "app.services.laboratory_service.LaboratoryService.update_booking_status",
+            "app.services.report_service.LaboratoryBookingRepository.get_by_id",
+            new=AsyncMock(return_value=booking),
+        ),
+        patch(
+            "app.services.laboratory_service.LaboratoryService.notify_booking_status",
             new=AsyncMock(side_effect=RuntimeError(secret)),
         ),
-        patch("app.models.patient.Patient.get", new=AsyncMock(return_value=None)),
+        patch(
+            "app.models.patient.Patient.get",
+            new=AsyncMock(side_effect=[MagicMock(), None]),
+        ),
         caplog.at_level(logging.WARNING),
     ):
         result = await ReportService.create_report(
@@ -80,10 +91,12 @@ async def test_report_follow_up_failure_logs_category_without_exception_secret(c
             description="Ready",
             therapist="Clinician",
             content={},
+            actor_user_id="admin-user",
+            actor_role="admin",
         )
 
     assert result is report
-    assert "operation=lab_status_transition" in caplog.text
+    assert "operation=lab_status_notification" in caplog.text
     assert secret not in caplog.text
 
 
@@ -103,7 +116,12 @@ async def test_laboratory_notification_failure_logs_category_without_exception_s
         patch("app.services.laboratory_service.Patient.get", new=AsyncMock(side_effect=RuntimeError(secret))),
         caplog.at_level(logging.WARNING),
     ):
-        result = await LaboratoryService.update_booking_status("booking-id", "completed")
+        result = await LaboratoryService.update_booking_status(
+            "booking-id",
+            "completed",
+            actor_user_id="admin-user",
+            actor_role="admin",
+        )
 
     assert result is booking
     assert "operation=status_notification" in caplog.text

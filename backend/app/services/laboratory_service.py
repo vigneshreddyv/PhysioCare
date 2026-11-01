@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, time
 from typing import List, Optional
 
 from beanie import PydanticObjectId
+from bson.errors import InvalidId
 from fastapi import HTTPException, status
 
 from app.core.time import utc_now
@@ -12,6 +13,7 @@ from app.repositories.laboratory_test_repository import LaboratoryTestRepository
 from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
 from app.models.user import User
 from app.models.patient import Patient
+from app.services.clinical_authorization import require_doctor_patient_access
 
 
 logger = logging.getLogger(__name__)
@@ -191,15 +193,28 @@ class LaboratoryService:
     @staticmethod
     async def update_booking_status(
         booking_id: str,
-        new_status: str
+        new_status: str,
+        *,
+        actor_user_id: str,
+        actor_role: str,
     ) -> Optional[LaboratoryBooking]:
         """
         Update the physical status of a booking with strict transition validation.
         Admin/Doctor authorized only.
         """
-        booking = await LaboratoryBookingRepository.get_by_id(booking_id)
+        if actor_role not in {"admin", "doctor"}:
+            raise PermissionError("Laboratory booking is not available")
+        try:
+            booking = await LaboratoryBookingRepository.get_by_id(booking_id)
+        except (InvalidId, ValueError, TypeError):
+            return None
         if not booking:
             return None
+        if actor_role == "doctor":
+            try:
+                await require_doctor_patient_access(actor_user_id, str(booking.patient_id))
+            except PermissionError:
+                raise PermissionError("Laboratory booking is not available") from None
 
         # Treat missing status field as pending_payment for backward compatibility
         current_status = getattr(booking, "status", "pending_payment") or "pending_payment"
@@ -218,7 +233,12 @@ class LaboratoryService:
         booking.status = new_status
         await booking.save()
 
-        # Notify patient on lifecycle milestones
+        await LaboratoryService.notify_booking_status(booking, new_status)
+        return booking
+
+    @staticmethod
+    async def notify_booking_status(booking: LaboratoryBooking, new_status: str) -> None:
+        """Best-effort status notification after an authorized state change."""
         try:
             patient = await Patient.get(booking.patient_id)
             if patient:
@@ -243,5 +263,3 @@ class LaboratoryService:
             logger.warning(
                 "Laboratory follow-up failed: operation=status_notification"
             )
-
-        return booking

@@ -50,6 +50,8 @@ def enable_worker(monkeypatch):
 def test_worker_configuration_has_validated_small_app_defaults():
     config = Settings(
         _env_file=None,
+        ENVIRONMENT="test",
+        PAYMENT_RECONCILIATION_ENABLED=True,
         JWT_SECRET="a" * 32,
         JWT_REFRESH_SECRET="b" * 32,
     )
@@ -60,6 +62,8 @@ def test_worker_configuration_has_validated_small_app_defaults():
     with pytest.raises(ValidationError):
         Settings(
             _env_file=None,
+            ENVIRONMENT="test",
+            PAYMENT_RECONCILIATION_ENABLED=True,
             JWT_SECRET="a" * 32,
             JWT_REFRESH_SECRET="b" * 32,
             PAYMENT_RECONCILIATION_INTERVAL_SECONDS=30,
@@ -205,6 +209,8 @@ async def test_worker_shutdown_cancels_and_awaits_active_task(monkeypatch):
 async def test_application_lifespan_initializes_database_before_worker_and_stops_it(monkeypatch):
     import app.main as main_module
 
+    monkeypatch.setattr(settings, "ENVIRONMENT", "test")
+    monkeypatch.setattr(settings, "PAYMENT_RECONCILIATION_ENABLED", True)
     calls = []
 
     async def init_database():

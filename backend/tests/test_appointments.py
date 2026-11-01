@@ -72,7 +72,7 @@ async def test_patient_cannot_cancel_another_patients_appointment(monkeypatch):
             "000000000000000000000000",
         )
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404
     AppointmentRepository.cancel_scheduled_owned.assert_not_awaited()
 
 
@@ -161,4 +161,4 @@ async def test_doctor_cannot_update_an_unassigned_appointment(monkeypatch):
             actor_role="doctor",
         )
 
-    assert error.value.status_code == 403
+    assert error.value.status_code == 404

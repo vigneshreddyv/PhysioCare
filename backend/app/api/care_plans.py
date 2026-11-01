@@ -20,6 +20,15 @@ from app.services.care_plan_service import CarePlanService
 router = APIRouter(prefix="/care-plans", tags=["care-plans"])
 
 
+def _scoped_denial(current_user: User, detail: str) -> HTTPException:
+    if current_user.role == "doctor":
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Operation not permitted for this role",
+    )
+
+
 @router.get("", response_model=List[CarePlanResponse])
 async def list_care_plans(
     current_user: User = Depends(RoleChecker(["patient"]))
@@ -119,11 +128,8 @@ async def create_care_plan(
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
-        )
+    except PermissionError:
+        raise _scoped_denial(current_user, "Patient not found") from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -164,8 +170,8 @@ async def update_care_plan(
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except PermissionError:
+        raise _scoped_denial(current_user, "Care Plan not found") from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -206,8 +212,8 @@ async def get_patient_care_plans_by_clinician(
         from app.services.clinical_authorization import require_doctor_patient_access
         try:
             await require_doctor_patient_access(str(current_user.id), patient_id)
-        except PermissionError as e:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except PermissionError:
+            raise _scoped_denial(current_user, "Patient not found") from None
     care_plans = await CarePlanService.get_care_plans_by_patient(patient_id)
     return [
         CarePlanResponse(
@@ -245,8 +251,8 @@ async def update_stage_status_endpoint(
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except PermissionError:
+        raise _scoped_denial(current_user, "Care Plan not found") from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -294,8 +300,8 @@ async def update_goal_progress_endpoint(
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except PermissionError:
+        raise _scoped_denial(current_user, "Care Plan not found") from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -398,8 +404,8 @@ async def get_care_plan_exercises(
             await require_doctor_patient_access(
                 str(current_user.id), str(care_plan.patient_id)
             )
-        except PermissionError as e:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except PermissionError:
+            raise _scoped_denial(current_user, "Care plan not found") from None
 
     assignments = await ExerciseService.list_assignments_for_care_plan(care_plan_id)
     return [

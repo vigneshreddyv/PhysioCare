@@ -1,14 +1,12 @@
-import asyncio
-import os
 import re
+from io import BytesIO
 from pathlib import Path
-from uuid import uuid4
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
+from starlette.datastructures import Headers
 
 from app.core.config import settings
 from app.core.lab_demo import LAB_DEMO_REHEARSAL_TAG
-from app.core.lab_demo_storage import report_file_path, secure_report_storage
 from app.models.lab_request import LabRequest
 from app.repositories.lab_request_repository import LabRequestRepository
 from app.repositories.profile_repository import ProfileRepository
@@ -20,6 +18,7 @@ from app.schemas.lab_request import (
     LabRequestOut,
     LaboratorianLabRequestOut,
 )
+from app.services.clinical_report_storage import LabReportStorage
 
 
 class LabRequestService:
@@ -114,42 +113,41 @@ class LabRequestService:
             raise HTTPException(status_code=409, detail="A released report cannot be replaced")
         if not content or len(content) > settings.LAB_REPORT_MAX_BYTES:
             raise HTTPException(status_code=422, detail="Choose a PDF within the configured file-size limit")
-        if not content.startswith(b"%PDF-"):
-            raise HTTPException(status_code=422, detail="Only PDF laboratory reports are accepted")
+        if Path(original_name).suffix.casefold() != ".pdf":
+            raise HTTPException(status_code=415, detail="Only PDF laboratory reports are accepted")
 
         safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", Path(original_name).name).strip(" ._")
-        if not safe_name.lower().endswith(".pdf"):
-            safe_name = f"{safe_name or 'laboratory-report'}.pdf"
-        storage_key = f"{uuid4().hex}.pdf"
-        storage_root = secure_report_storage() if settings.LAB_DEMO_MODE else Path(settings.LAB_REPORT_STORAGE_DIR)
-        storage_path = report_file_path(storage_key)
+        if not safe_name:
+            safe_name = "laboratory-report.pdf"
         previous_key = request.report_storage_key
-
-        def write_private_file():
-            storage_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            os.chmod(storage_root, 0o700)
-            storage_path.write_bytes(content)
-            os.chmod(storage_path, 0o600)
-
-        await asyncio.to_thread(write_private_file)
-        changed = await LabRequestRepository.save_finalized_report(
-            request_id,
-            laboratorian_id,
-            expected_storage_key=previous_key,
-            storage_key=storage_key,
-            file_name=safe_name,
-            content_type="application/pdf",
-            size_bytes=len(content),
+        upload = UploadFile(
+            BytesIO(content),
+            size=len(content),
+            filename=safe_name,
+            headers=Headers({"content-type": "application/pdf"}),
         )
+        storage_key = await LabReportStorage.store_pdf(
+            upload,
+            uploaded_by_user_id=laboratorian_id,
+        )
+        try:
+            changed = await LabRequestRepository.save_finalized_report(
+                request_id,
+                laboratorian_id,
+                expected_storage_key=previous_key,
+                storage_key=storage_key,
+                file_name=safe_name,
+                content_type="application/pdf",
+                size_bytes=len(content),
+            )
+        except Exception:
+            LabReportStorage.delete(storage_key)
+            raise
         if not changed:
-            await asyncio.to_thread(storage_path.unlink, missing_ok=True)
+            LabReportStorage.delete(storage_key, reason_code="concurrent_database_change")
             raise HTTPException(status_code=409, detail="The laboratory order changed; refresh and try again")
         if previous_key and previous_key != storage_key:
-            previous_path = storage_root / Path(previous_key).name
-            try:
-                await asyncio.to_thread(previous_path.unlink, missing_ok=True)
-            except OSError:
-                pass
+            LabReportStorage.delete(previous_key, reason_code="superseded")
         return await LabRequestService._format_for_laboratorian(await LabRequestRepository.get(request_id))
 
     @staticmethod
@@ -168,7 +166,7 @@ class LabRequestService:
         if storage_key != request.report_storage_key:
             raise HTTPException(status_code=409, detail="The finalized report file is unavailable")
         try:
-            path = report_file_path(storage_key)
+            path = LabReportStorage.resolve(storage_key)
         except (RuntimeError, ValueError):
             raise HTTPException(status_code=409, detail="The finalized report file is unavailable") from None
         if not path.is_file():
@@ -237,12 +235,12 @@ class LabRequestService:
                     for item in appointments
                 )
         if not allowed:
-            raise HTTPException(status_code=403, detail="You do not have access to this laboratory report")
+            raise HTTPException(status_code=404, detail="Laboratory report not found")
         storage_key = Path(request.report_storage_key).name
         if storage_key != request.report_storage_key:
             raise HTTPException(status_code=404, detail="Laboratory report not found")
         try:
-            path = report_file_path(storage_key)
+            path = LabReportStorage.resolve(storage_key)
         except (RuntimeError, ValueError):
             raise HTTPException(status_code=404, detail="Laboratory report not found") from None
         if not path.is_file():
@@ -268,7 +266,7 @@ class LabRequestService:
         if not patient or not request:
             raise HTTPException(status_code=404, detail="Laboratory request not found")
         if str(request.patient_id) != str(patient.id):
-            raise HTTPException(status_code=403, detail="You may withdraw only your own laboratory requests")
+            raise HTTPException(status_code=404, detail="Laboratory request not found")
         if request.status != "withdrawn":
             changed = await LabRequestRepository.transition(
                 request_id, ["pending_clinic_confirmation", "approved_for_coordination"], "withdrawn"

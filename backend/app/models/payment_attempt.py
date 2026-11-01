@@ -43,6 +43,9 @@ class PaymentAttempt(Document):
 
 class RazorpayWebhookEvent(Document):
     event_id: str
+    # The header is not part of Razorpay's signed body. Deduplicate by the
+    # digest of the verified raw body as well as retaining the header for audit.
+    body_digest: Optional[str] = None
     provider_order_id: Optional[str] = None
     status: str = "processing"  # processing, processed
     received_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -50,4 +53,12 @@ class RazorpayWebhookEvent(Document):
 
     class Settings:
         name = "razorpay_webhook_events"
-        indexes = [IndexModel([("event_id", ASCENDING)], unique=True, name="unique_razorpay_webhook_event")]
+        indexes = [
+            IndexModel([("event_id", ASCENDING)], unique=True, name="unique_razorpay_webhook_event"),
+            IndexModel(
+                [("body_digest", ASCENDING)],
+                unique=True,
+                name="unique_razorpay_webhook_body_digest",
+                partialFilterExpression={"body_digest": {"$type": "string"}},
+            ),
+        ]

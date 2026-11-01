@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -20,18 +21,40 @@ from app.api.notifications import router as notifications_router
 from app.database import init_db
 from app.core.config import settings
 from app.services.payment_reconciliation_worker import PaymentReconciliationWorker
+from app.services.clinical_report_storage import ClinicalReportStorage, LabReportStorage
+from app.services.pdf_malware_scanner import ClamAvUnixScanner, UnavailablePdfMalwareScanner
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_runtime_startup()
+    scanner = (
+        ClamAvUnixScanner(settings.PDF_SCANNER_SOCKET)
+        if settings.PDF_SCANNER_MODE == "clamav_unix"
+        else UnavailablePdfMalwareScanner()
+    )
+    if isinstance(scanner, ClamAvUnixScanner):
+        try:
+            scanner_ready = await asyncio.wait_for(
+                scanner.ready(), timeout=min(settings.PDF_SCAN_TIMEOUT_SECONDS, 5.0)
+            )
+        except asyncio.TimeoutError:
+            scanner_ready = False
+        if not scanner_ready:
+            raise RuntimeError("Configured PDF scanner is unavailable")
+    ClinicalReportStorage.scanner = scanner
+    LabReportStorage.scanner = scanner
     await init_db()
-    reconciliation_worker = PaymentReconciliationWorker()
-    await reconciliation_worker.start()
+    reconciliation_worker = None
+    if settings.PAYMENT_RECONCILIATION_ENABLED:
+        reconciliation_worker = PaymentReconciliationWorker()
+        await reconciliation_worker.start()
     app.state.payment_reconciliation_worker = reconciliation_worker
     try:
         yield
     finally:
-        await reconciliation_worker.stop()
+        if reconciliation_worker is not None:
+            await reconciliation_worker.stop()
 
 app = FastAPI(
     title="PhysioCare API",

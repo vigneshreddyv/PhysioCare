@@ -40,6 +40,7 @@ def _demo_settings(monkeypatch, tmp_path, **overrides):
         "RAZORPAY_MODE": "disabled",
         "PAYMENT_RECONCILIATION_ENABLED": False,
         "LAB_REPORT_STORAGE_DIR": str(tmp_path / "PhysioCareLabDemo" / "lab-reports"),
+        "LAB_REPORT_QUARANTINE_DIR": str(tmp_path / "PhysioCareLabDemo" / "lab-report-quarantine"),
         "CORS_ORIGINS": ["http://127.0.0.1:5175"],
     }
     values.update(overrides)
@@ -67,6 +68,7 @@ def test_demo_settings_accept_only_the_dedicated_loopback_configuration(monkeypa
         {"PAYMENT_RECONCILIATION_ENABLED": True},
         {"CORS_ORIGINS": ["http://localhost:5173"]},
         {"LAB_REPORT_STORAGE_DIR": "uploads/lab-reports"},
+        {"LAB_REPORT_QUARANTINE_DIR": "uploads/lab-report-quarantine"},
     ],
 )
 def test_demo_settings_reject_database_network_payment_or_storage_drift(
@@ -93,7 +95,7 @@ def test_selected_demo_environment_file_requires_demo_mode(monkeypatch, tmp_path
 
 def test_database_guard_runs_before_constructing_a_mongo_client(monkeypatch):
     guard = Mock()
-    guard.validate_lab_demo_isolation.side_effect = ValueError("unsafe target")
+    guard.validate_runtime_startup.side_effect = ValueError("unsafe target")
     client_constructor = Mock()
     monkeypatch.setattr("app.database.settings", guard)
     monkeypatch.setattr("app.database.BeanieCompatibleMotorClient", client_constructor)

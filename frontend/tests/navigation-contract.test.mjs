@@ -373,6 +373,16 @@ test('public clinician choice survives authentication without persistent or sens
 });
 
 
+test('public registration success does not reveal whether an email already existed', async () => {
+  const registerSource = await source('src/pages/common/Register.jsx');
+
+  assert.match(registerSource, /Registration received/);
+  assert.match(registerSource, /does not confirm whether an email was already registered/);
+  assert.doesNotMatch(registerSource, /Patient account created/);
+  assert.doesNotMatch(registerSource, /Your account was created as a patient account/);
+});
+
+
 test('appointment completion requires verified payment and offers a dashboard handoff', async () => {
   const [bookingSource, dashboardSource, homeVisitSource] = await Promise.all([
     source('src/pages/patient/BookAppointment.jsx'),

@@ -1,6 +1,7 @@
 from typing import List, Optional
 from beanie import PydanticObjectId
 from datetime import datetime, time
+from pymongo import ReturnDocument
 
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
 
@@ -19,6 +20,21 @@ class LaboratoryBookingRepository:
         return await LaboratoryBooking.find(
             LaboratoryBooking.patient_id == PydanticObjectId(patient_id)
         ).sort(-LaboratoryBooking.created_at).to_list()
+
+    @staticmethod
+    async def complete_confirmed_for_report(booking_id: str, patient_id: str, *, session=None) -> bool:
+        """Claim a confirmed booking inside the report creation transaction."""
+        document = await LaboratoryBooking.get_pymongo_collection().find_one_and_update(
+            {
+                "_id": PydanticObjectId(booking_id),
+                "patient_id": PydanticObjectId(patient_id),
+                "status": "confirmed",
+            },
+            {"$set": {"status": "completed"}},
+            return_document=ReturnDocument.AFTER,
+            session=session,
+        )
+        return document is not None
 
     @staticmethod
     async def find_conflicting_booking(

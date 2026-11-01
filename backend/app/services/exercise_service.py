@@ -20,9 +20,11 @@ def to_object_id(val) -> PydanticObjectId:
 
 class ExerciseService:
     @staticmethod
-    async def _authorize_doctor(patient_id: str, actor_user_id: str, actor_role: str):
-        if actor_role != "doctor":
+    async def _authorize_doctor(patient_id: str, actor_user_id: str, actor_role: str | None):
+        if actor_role == "admin" and actor_user_id:
             return None
+        if actor_role != "doctor" or not actor_user_id:
+            raise PermissionError("Explicit clinical actor context is required.")
         from app.services.clinical_authorization import require_doctor_patient_access
         return await require_doctor_patient_access(actor_user_id, patient_id)
 
@@ -54,20 +56,23 @@ class ExerciseService:
     async def create_assignment(
         assignment_data: dict,
         assigned_by_user_id: str,
-        assigned_by_role: str = "admin"
+        assigned_by_role: str,
     ) -> ExerciseAssignment:
         patient_id = assignment_data.get("patient_id")
         care_plan_id = assignment_data.get("care_plan_id")
         stage_id = assignment_data.get("stage_id")
         exercise_id = assignment_data.get("exercise_id")
 
+        # Resolve clinician scope before exposing whether the supplied patient
+        # exists. Admin callers retain the detailed validation path below.
+        doctor = await ExerciseService._authorize_doctor(
+            str(patient_id), assigned_by_user_id, assigned_by_role
+        )
+
         # 1. Validate patient existence
         patient = await Patient.get(to_object_id(patient_id))
         if not patient:
             raise ValueError("Patient does not exist.")
-        doctor = await ExerciseService._authorize_doctor(
-            str(patient.id), assigned_by_user_id, assigned_by_role
-        )
 
         # 2. Validate care plan existence and ownership
         care_plan = await CarePlanRepository.get_by_id(str(care_plan_id))
@@ -135,9 +140,14 @@ class ExerciseService:
         assignment = await ExerciseRepository.get_assignment_by_id(assignment_id)
         if not assignment:
             return None
-        await ExerciseService._authorize_doctor(
-            str(assignment.patient_id), actor_user_id, user_role
-        )
+        if user_role == "patient":
+            patient = await ProfileRepository.get_patient_by_user_id(actor_user_id)
+            if not patient or str(patient.id) != str(assignment.patient_id):
+                raise PermissionError("Assignment is not available")
+        else:
+            await ExerciseService._authorize_doctor(
+                str(assignment.patient_id), actor_user_id, user_role
+            )
 
         # If user is a patient, enforce read-only on prescription parameters
         if user_role == "patient":

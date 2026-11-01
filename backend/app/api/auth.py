@@ -1,6 +1,6 @@
 import secrets
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from app.models.user import User
 from app.middleware.auth import get_current_user
 from app.core.config import settings
@@ -13,13 +13,19 @@ from app.core.security import (
 from app.schemas.auth import CsrfResponse, SessionResponse, UserRegister, UserLogin
 from app.services.auth_service import AuthService
 from app.services.user_service import UserService
+from app.services.auth_rate_limit_service import auth_rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(schema: UserRegister):
-    user = await AuthService.register(schema)
-    return {"message": "Registration successful", "email": user.email}
+@router.post("/register", status_code=status.HTTP_202_ACCEPTED)
+async def register(schema: UserRegister, request: Request):
+    await auth_rate_limiter.registration(request)
+    await AuthService.register(schema)
+    return {
+        "message": (
+            "If registration can be completed, the account is ready for sign in."
+        )
+    }
 
 def set_session_cookies(
     response: Response,
@@ -83,18 +89,22 @@ def session_response(bundle) -> SessionResponse:
 
 
 @router.post("/login", response_model=SessionResponse)
-async def login(schema: UserLogin, response: Response):
+async def login(schema: UserLogin, response: Response, request: Request):
+    await auth_rate_limiter.before_login(request, str(schema.email))
     bundle = await AuthService.login(schema.email, schema.password)
+    await auth_rate_limiter.login_succeeded(str(schema.email))
     set_session_cookies(response, bundle.access_token, bundle.refresh_token, bundle.csrf_token)
     return session_response(bundle)
 
 
 @router.post("/refresh", response_model=SessionResponse)
 async def refresh(
+    request: Request,
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
     csrf_token: str | None = Header(default=None, alias=CSRF_HEADER_NAME),
 ):
+    await auth_rate_limiter.refresh(request, refresh_token)
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
     bundle = await AuthService.refresh_tokens(refresh_token, csrf_token or "")
@@ -104,9 +114,11 @@ async def refresh(
 
 @router.get("/csrf", response_model=CsrfResponse)
 async def csrf(
+    request: Request,
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
 ):
+    await auth_rate_limiter.refresh(request, refresh_token)
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
     csrf_token = await AuthService.issue_csrf_token(refresh_token)

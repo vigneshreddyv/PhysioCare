@@ -31,6 +31,11 @@ from app.repositories.session_repository import SessionRepository
 from app.schemas.auth import StaffCreate, UserRegister
 
 
+# A synthetic hash makes unknown-account login perform the same password
+# verification work as an existing account with an incorrect password.
+_UNKNOWN_ACCOUNT_HASH = get_password_hash("physiocare-no-such-account")
+
+
 @dataclass
 class SessionBundle:
     access_token: str
@@ -46,7 +51,7 @@ class AuthService:
         schema: UserRegister,
         *,
         demo_rehearsal_tag: str | None = None,
-    ) -> User:
+    ) -> User | None:
         AuthService._validate_demo_tag(demo_rehearsal_tag)
         return await AuthService._create_user(
             email=schema.email,
@@ -54,6 +59,7 @@ class AuthService:
             full_name=schema.full_name,
             role="patient",
             demo_rehearsal_tag=demo_rehearsal_tag,
+            disclose_duplicate=False,
         )
 
     @staticmethod
@@ -70,6 +76,7 @@ class AuthService:
             full_name=schema.full_name,
             role=schema.role,
             demo_rehearsal_tag=tag,
+            disclose_duplicate=True,
         )
 
     @staticmethod
@@ -89,18 +96,22 @@ class AuthService:
         full_name: str,
         role: str,
         demo_rehearsal_tag: str | None = None,
-    ) -> User:
+        disclose_duplicate: bool = True,
+    ) -> User | None:
+
+        # Perform the same expensive password hashing work before the account
+        # lookup so public registration does not expose an obvious timing split.
+        hashed = get_password_hash(password)
 
         existing = await UserRepository.get_by_email(email)
 
         if existing:
+            if not disclose_duplicate:
+                return None
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered",
             )
-
-        hashed = get_password_hash(password)
-
         user = User(
             email=email,
             hashed_password=hashed,
@@ -112,6 +123,8 @@ class AuthService:
         try:
             saved_user = await UserRepository.create(user)
         except DuplicateKeyError as exc:
+            if not disclose_duplicate:
+                return None
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered",
@@ -142,7 +155,11 @@ class AuthService:
 
         user = await UserRepository.get_by_email(email)
 
-        if not user or not verify_password(password, user.hashed_password):
+        password_matches = verify_password(
+            password,
+            user.hashed_password if user else _UNKNOWN_ACCOUNT_HASH,
+        )
+        if not user or not password_matches:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",

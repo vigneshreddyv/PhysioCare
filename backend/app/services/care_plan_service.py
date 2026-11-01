@@ -30,10 +30,12 @@ class CarePlanService:
     async def _authorize_doctor(
         patient_id: str,
         actor_user_id: Optional[str],
-        actor_role: str
+        actor_role: Optional[str],
     ):
-        if actor_role != "doctor" or not actor_user_id:
+        if actor_role == "admin" and actor_user_id:
             return None
+        if actor_role != "doctor" or not actor_user_id:
+            raise PermissionError("Explicit clinical actor context is required.")
         from app.services.clinical_authorization import require_doctor_patient_access
         return await require_doctor_patient_access(actor_user_id, patient_id)
 
@@ -41,7 +43,7 @@ class CarePlanService:
     async def _authorize_plan_mutation(
         care_plan: CarePlan,
         actor_user_id: Optional[str],
-        actor_role: str
+        actor_role: Optional[str],
     ):
         doctor = await CarePlanService._authorize_doctor(
             str(care_plan.patient_id), actor_user_id, actor_role
@@ -63,16 +65,19 @@ class CarePlanService:
         target_date: datetime,
         status: str = "active",
         actor_user_id: Optional[str] = None,
-        actor_role: str = "admin"
+        actor_role: Optional[str] = None,
     ) -> CarePlan:
+        # Authorize clinician scope before returning any patient-existence
+        # signal. Admin callers retain explicit validation feedback.
+        doctor = await CarePlanService._authorize_doctor(
+            patient_id, actor_user_id, actor_role
+        )
+
         # Validate patient exists
         from app.models.patient import Patient
         patient = await Patient.get(to_object_id(patient_id))
         if not patient:
             raise ValueError("Target patient profile not found.")
-        doctor = await CarePlanService._authorize_doctor(
-            patient_id, actor_user_id, actor_role
-        )
         if doctor and str(therapist_id) != str(doctor.id):
             raise PermissionError("Doctor can only create care plans for their assigned patients.")
 
@@ -139,7 +144,7 @@ class CarePlanService:
         care_plan_id: str,
         update_data: dict,
         actor_user_id: Optional[str] = None,
-        actor_role: str = "admin"
+        actor_role: Optional[str] = None,
     ) -> Optional[CarePlan]:
         care_plan = await CarePlanRepository.get_by_id(care_plan_id)
         if not care_plan:
@@ -261,7 +266,7 @@ class CarePlanService:
         stage_id: str,
         new_status: str,
         actor_user_id: str,
-        actor_role: str = "admin"
+        actor_role: str
     ) -> Optional[CarePlan]:
         care_plan = await CarePlanRepository.get_by_id(care_plan_id)
         if not care_plan:
@@ -342,7 +347,7 @@ class CarePlanService:
         progress_value: float,
         new_status: str,
         actor_user_id: str,
-        actor_role: str = "admin"
+        actor_role: str
     ) -> Optional[CarePlan]:
         if progress_value < 0:
             raise ValueError("Progress value cannot be negative.")

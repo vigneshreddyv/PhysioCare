@@ -57,6 +57,7 @@ if ($Action -eq "configure") {
     New-Item -ItemType Directory -Path $DemoHome -Force | Out-Null
     Protect-CurrentUserPath $DemoHome $true
     $StoragePath = (Join-Path $DemoHome "lab-reports").Replace("\", "/")
+    $QuarantinePath = (Join-Path $DemoHome "lab-report-quarantine").Replace("\", "/")
     $Configuration = @"
 MONGODB_URL=mongodb://127.0.0.1:27018
 DATABASE_NAME=physiocare_lab_demo
@@ -72,6 +73,7 @@ RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=
 PAYMENT_RECONCILIATION_ENABLED=false
 LAB_REPORT_STORAGE_DIR="$StoragePath"
+LAB_REPORT_QUARANTINE_DIR="$QuarantinePath"
 CORS_ORIGINS=["http://127.0.0.1:5175"]
 "@
     [System.IO.File]::WriteAllText(
@@ -105,6 +107,7 @@ foreach ($Name in @(
     "RAZORPAY_WEBHOOK_SECRET",
     "PAYMENT_RECONCILIATION_ENABLED",
     "LAB_REPORT_STORAGE_DIR",
+    "LAB_REPORT_QUARANTINE_DIR",
     "CORS_ORIGINS"
 )) {
     Remove-Item -Path "Env:$Name" -ErrorAction SilentlyContinue
