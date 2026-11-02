@@ -1,3 +1,4 @@
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -30,20 +31,23 @@ export default function PatientDashboard() {
     error, 
     refetch 
   } = useQuery({
-    queryKey: ['patientAppointments'],
+    queryKey: ['patientAppointments', user?.id, 'dashboard'],
     queryFn: async () => {
-      const response = await api.get('/appointments');
+      const response = await fetchClinicalPage('/appointments/me/history?status_group=upcoming&future_only=true');
       return response.data;
-    }
+    },
+    gcTime: 0,
   });
 
   const labRequests = useQuery({
-    queryKey: ['myLabRequests'],
-    queryFn: async () => (await api.get('/lab-requests/me')).data,
+    queryKey: ['myLabRequests', user?.id, 'dashboard'],
+    queryFn: async () => (await fetchClinicalPage('/lab-requests/me?order=updated')).data,
+    gcTime: 0,
   });
   const homeRequests = useQuery({
-    queryKey: ['myHomeVisitRequests'],
-    queryFn: async () => (await api.get('/home-visit-requests/me')).data,
+    queryKey: ['myHomeVisitRequests', user?.id, 'dashboard'],
+    queryFn: async () => (await fetchClinicalPage('/home-visit-requests/me?order=updated')).data,
+    gcTime: 0,
   });
 
   const cancelMutation = useMutation({

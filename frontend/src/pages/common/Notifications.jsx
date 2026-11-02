@@ -1,10 +1,13 @@
-import React from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import api from '../../services/api';
 import Skeleton from '../../components/common/Skeleton';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 function formatNotificationTime(dateString) {
   if (!dateString) return '';
@@ -62,21 +65,23 @@ const typeStyles = {
 };
 
 export default function Notifications() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [user?.id]);
 
   const {
-    data: notifications = [],
+    data: notificationPage,
     isLoading,
     isError,
     error,
     refetch,
   } = useQuery({
-    queryKey: ['notifications'],
-    queryFn: async () => {
-      const response = await api.get('/notifications');
-      return response.data;
-    },
+    queryKey: ['notifications', user?.id, page],
+    queryFn: () => fetchClinicalPage('/notifications', page),
+    gcTime: 0,
   });
+  const notifications = notificationPage?.data || [];
 
   const { data: unreadData } = useQuery({
     queryKey: ['notificationsUnreadCount'],
@@ -165,11 +170,11 @@ export default function Notifications() {
           <div className="flex items-center gap-2">
             {unreadCount > 0 && (
               <span className="text-xs bg-primary text-on-primary font-bold px-2.5 py-0.5 rounded-full">
-                {unreadCount} unread
+              {unreadCount}{unreadData?.count == null ? ' on this page' : ''} unread
               </span>
             )}
             <span className="text-xs bg-surface-container text-on-surface-variant font-semibold px-2.5 py-0.5 rounded-full">
-              {notifications.length} total
+              {notifications.length} on this page
             </span>
           </div>
         </div>
@@ -242,6 +247,7 @@ export default function Notifications() {
           </div>
         )}
       </div>
+      <ClinicalPageNav label="Notifications" page={page} onPageChange={setPage} isLoading={isLoading} itemCount={notifications.length} />
     </div>
   );
 }

@@ -274,22 +274,6 @@ export default function LaboratoryBookingDetail() {
                     {booking.payment_status || 'Pending'}
                   </p>
                 </div>
-                {booking.payment_id && (
-                  <div className="col-span-2 sm:col-span-1">
-                    <p className="font-bold text-[#60716E]">Transaction ID</p>
-                    <p className="font-mono text-[11px] text-[#183B4A] mt-1 break-all">
-                      {booking.payment_id}
-                    </p>
-                  </div>
-                )}
-                {booking.payment_order_id && (
-                  <div className="col-span-2 sm:col-span-1">
-                    <p className="font-bold text-[#60716E]">Order ID</p>
-                    <p className="font-mono text-[11px] text-[#183B4A] mt-1 break-all">
-                      {booking.payment_order_id}
-                    </p>
-                  </div>
-                )}
               </div>
 
               <div className="border-t border-[#E5E0D6] pt-4 flex justify-between items-center">

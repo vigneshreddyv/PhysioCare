@@ -1,7 +1,10 @@
 from datetime import datetime
-from typing import List, Optional, Literal
+from typing import Annotated, List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+LaboratoryTestId = Annotated[str, Field(min_length=1, max_length=128)]
 
 
 class EmbeddedTestBase(BaseModel):
@@ -12,11 +15,13 @@ class EmbeddedTestBase(BaseModel):
 
 
 class LaboratoryBookingBase(BaseModel):
-    test_ids: List[str] = Field(..., min_length=1)
-    appointment_date: str  # Expected in YYYY-MM-DD format
-    time_slot: str
-    visit_type: str  # Must be 'home' or 'clinic'
-    address: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+    test_ids: List[LaboratoryTestId] = Field(..., min_length=1, max_length=12)
+    appointment_date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
+    time_slot: str = Field(min_length=1, max_length=20)
+    visit_type: Literal["home", "clinic"]
+    address: Optional[str] = Field(default=None, max_length=500)
 
 
 class LaboratoryBookingCreate(LaboratoryBookingBase):
@@ -36,16 +41,16 @@ class LaboratoryBookingResponse(BaseModel):
     billing_amount: float
     payment_method: Optional[str]
     payment_status: Optional[str]
-    payment_id: Optional[str]
-    payment_order_id: Optional[str]
     created_at: datetime
 
 
 class LaboratoryBookingPaymentUpdate(BaseModel):
-    payment_method: str
-    payment_id: str
-    payment_order_id: str
-    payment_status: str  # Expected 'success' or 'failed'
+    model_config = ConfigDict(extra="forbid")
+
+    payment_method: str = Field(min_length=1, max_length=50)
+    payment_id: str = Field(min_length=1, max_length=128)
+    payment_order_id: str = Field(min_length=1, max_length=128)
+    payment_status: Literal["success", "failed"]
 
 
 class LaboratoryBookingStatusUpdate(BaseModel):

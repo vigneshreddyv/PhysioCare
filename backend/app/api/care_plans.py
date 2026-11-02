@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List
+from typing import List, Literal
 from app.models.user import User
 from app.middleware.auth import get_current_user, RoleChecker
 from app.schemas.exercise import ExerciseAssignmentResponse
@@ -16,6 +16,8 @@ from app.schemas.care_plan import (
     CarePlanHistoryResponse
 )
 from app.services.care_plan_service import CarePlanService
+from app.repositories.care_plan_repository import CarePlanMutationConflict
+from app.core.pagination import DEFAULT_PAGE_SIZE, page_window
 
 router = APIRouter(prefix="/care-plans", tags=["care-plans"])
 
@@ -31,7 +33,10 @@ def _scoped_denial(current_user: User, detail: str) -> HTTPException:
 
 @router.get("", response_model=List[CarePlanResponse])
 async def list_care_plans(
-    current_user: User = Depends(RoleChecker(["patient"]))
+    current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    selection: Literal["all", "active_latest"] = "all",
 ):
     """List all Care Plans belonging to the authenticated patient."""
     from app.repositories.profile_repository import ProfileRepository
@@ -41,7 +46,14 @@ async def list_care_plans(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient profile not found"
         )
-    care_plans = await CarePlanService.get_care_plans_by_patient(str(patient.id))
+    window = page_window(page, page_size)
+    if selection == "active_latest":
+        selected = await CarePlanService.get_active_or_latest_by_patient(str(patient.id)) if window.number == 1 else None
+        care_plans = [selected] if selected else []
+    else:
+        care_plans = await CarePlanService.get_care_plans_by_patient(
+            str(patient.id), window,
+        )
     return [
         CarePlanResponse(
             id=str(cp.id),
@@ -56,6 +68,7 @@ async def list_care_plans(
             start_date=cp.start_date,
             target_date=cp.target_date,
             status=cp.status,
+            revision=getattr(cp, "revision", 0),
             created_at=cp.created_at,
             updated_at=cp.updated_at
         ) for cp in care_plans
@@ -94,6 +107,7 @@ async def get_care_plan(
         start_date=care_plan.start_date,
         target_date=care_plan.target_date,
         status=care_plan.status,
+        revision=getattr(care_plan, "revision", 0),
         created_at=care_plan.created_at,
         updated_at=care_plan.updated_at
     )
@@ -149,6 +163,7 @@ async def create_care_plan(
         start_date=cp.start_date,
         target_date=cp.target_date,
         status=cp.status,
+        revision=getattr(cp, "revision", 0),
         created_at=cp.created_at,
         updated_at=cp.updated_at
     )
@@ -172,6 +187,11 @@ async def update_care_plan(
         )
     except PermissionError:
         raise _scoped_denial(current_user, "Care Plan not found") from None
+    except CarePlanMutationConflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The care plan changed. Reload the latest record before trying again.",
+        ) from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -197,6 +217,7 @@ async def update_care_plan(
         start_date=cp.start_date,
         target_date=cp.target_date,
         status=cp.status,
+        revision=getattr(cp, "revision", 0),
         created_at=cp.created_at,
         updated_at=cp.updated_at
     )
@@ -205,7 +226,9 @@ async def update_care_plan(
 @router.get("/patient/{patient_id}", response_model=List[CarePlanResponse])
 async def get_patient_care_plans_by_clinician(
     patient_id: str,
-    current_user: User = Depends(RoleChecker(["admin", "doctor"]))
+    current_user: User = Depends(RoleChecker(["admin", "doctor"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
     """Retrieve all Care Plans for a specific patient. Restricted to doctor/admin."""
     if current_user.role == "doctor":
@@ -214,7 +237,9 @@ async def get_patient_care_plans_by_clinician(
             await require_doctor_patient_access(str(current_user.id), patient_id)
         except PermissionError:
             raise _scoped_denial(current_user, "Patient not found") from None
-    care_plans = await CarePlanService.get_care_plans_by_patient(patient_id)
+    care_plans = await CarePlanService.get_care_plans_by_patient(
+        patient_id, page_window(page, page_size),
+    )
     return [
         CarePlanResponse(
             id=str(cp.id),
@@ -229,6 +254,7 @@ async def get_patient_care_plans_by_clinician(
             start_date=cp.start_date,
             target_date=cp.target_date,
             status=cp.status,
+            revision=getattr(cp, "revision", 0),
             created_at=cp.created_at,
             updated_at=cp.updated_at
         ) for cp in care_plans
@@ -248,11 +274,17 @@ async def update_stage_status_endpoint(
             care_plan_id=care_plan_id,
             stage_id=stage_id,
             new_status=payload.status,
+            expected_revision=payload.expected_revision,
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
     except PermissionError:
         raise _scoped_denial(current_user, "Care Plan not found") from None
+    except CarePlanMutationConflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The care plan changed. Reload the latest record before trying again.",
+        ) from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -278,6 +310,7 @@ async def update_stage_status_endpoint(
         start_date=cp.start_date,
         target_date=cp.target_date,
         status=cp.status,
+        revision=getattr(cp, "revision", 0),
         created_at=cp.created_at,
         updated_at=cp.updated_at
     )
@@ -297,11 +330,17 @@ async def update_goal_progress_endpoint(
             goal_id=goal_id,
             progress_value=payload.progress_value,
             new_status=payload.status,
+            expected_revision=payload.expected_revision,
             actor_user_id=str(current_user.id),
             actor_role=current_user.role
         )
     except PermissionError:
         raise _scoped_denial(current_user, "Care Plan not found") from None
+    except CarePlanMutationConflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The care plan changed. Reload the latest record before trying again.",
+        ) from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -327,6 +366,7 @@ async def update_goal_progress_endpoint(
         start_date=cp.start_date,
         target_date=cp.target_date,
         status=cp.status,
+        revision=getattr(cp, "revision", 0),
         created_at=cp.created_at,
         updated_at=cp.updated_at
     )
@@ -335,7 +375,9 @@ async def update_goal_progress_endpoint(
 @router.get("/{care_plan_id}/history", response_model=List[CarePlanHistoryResponse])
 async def get_care_plan_history(
     care_plan_id: str,
-    current_user: User = Depends(RoleChecker(["patient"]))
+    current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
     """Retrieve patient-safe Care Plan event history log."""
     from app.repositories.profile_repository import ProfileRepository
@@ -348,7 +390,8 @@ async def get_care_plan_history(
 
     history = await CarePlanService.get_care_plan_history_for_patient(
         care_plan_id=care_plan_id,
-        patient_id=str(patient.id)
+        patient_id=str(patient.id),
+        page=page_window(page, page_size),
     )
 
     if history is None:
@@ -367,10 +410,30 @@ async def get_care_plan_history(
     ]
 
 
+@router.get("/{care_plan_id}/exercise-summary", response_model=list[dict])
+async def get_patient_care_plan_exercise_summary(
+    care_plan_id: str,
+    current_user: User = Depends(RoleChecker(["patient"])),
+):
+    from app.repositories.profile_repository import ProfileRepository
+    from app.repositories.care_plan_repository import CarePlanRepository
+    from app.repositories.exercise_repository import ExerciseRepository
+
+    patient = await ProfileRepository.get_patient_by_user_id(str(current_user.id))
+    care_plan = await CarePlanRepository.get_by_id(care_plan_id)
+    if not patient or not care_plan or str(care_plan.patient_id) != str(patient.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Care plan not found")
+    return await ExerciseRepository.aggregate_care_plan_stage_counts(
+        str(patient.id), care_plan_id,
+    )
+
+
 @router.get("/{care_plan_id}/exercises", response_model=List[ExerciseAssignmentResponse])
 async def get_care_plan_exercises(
     care_plan_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
     """Retrieve exercises assigned to a specific Care Plan, validating ownership."""
     from app.repositories.profile_repository import ProfileRepository
@@ -407,7 +470,9 @@ async def get_care_plan_exercises(
         except PermissionError:
             raise _scoped_denial(current_user, "Care plan not found") from None
 
-    assignments = await ExerciseService.list_assignments_for_care_plan(care_plan_id)
+    assignments = await ExerciseService.list_assignments_for_care_plan(
+        care_plan_id, page_window(page, page_size),
+    )
     return [
         ExerciseAssignmentResponse(
             id=str(a.id),

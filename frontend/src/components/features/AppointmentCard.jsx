@@ -16,6 +16,7 @@ export default function AppointmentCard({
     time_slot,
     reason,
     status,
+    revision = 0,
     specialty,
     duration,
     can_patient_cancel,
@@ -159,7 +160,7 @@ export default function AppointmentCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onStatusChange(id, 'in_progress');
+                  onStatusChange(id, 'in_progress', revision);
                 }}
                 className="w-full flex items-center justify-center px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors duration-200"
               >
@@ -170,7 +171,7 @@ export default function AppointmentCard({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onStatusChange(id, 'completed');
+                    onStatusChange(id, 'completed', revision);
                   }}
                   className="flex-1 flex items-center justify-center px-3 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors duration-200"
                 >
@@ -180,7 +181,7 @@ export default function AppointmentCard({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onStatusChange(id, 'cancelled');
+                    onStatusChange(id, 'cancelled', revision);
                   }}
                   className="flex-1 flex items-center justify-center px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors duration-200"
                 >

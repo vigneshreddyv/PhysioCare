@@ -81,6 +81,30 @@ async def test_unknown_account_login_still_verifies_a_password_hash(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_inactive_account_login_uses_generic_failure_without_creating_session(
+    monkeypatch,
+):
+    user = make_user(active=False)
+    verify = Mock(return_value=True)
+    create = AsyncMock()
+    monkeypatch.setattr(
+        auth_service.UserRepository,
+        "get_by_email",
+        AsyncMock(return_value=user),
+    )
+    monkeypatch.setattr(auth_service, "verify_password", verify)
+    monkeypatch.setattr(auth_service.SessionRepository, "create", create)
+
+    with pytest.raises(HTTPException) as error:
+        await AuthService.login(user.email, "password")
+
+    assert error.value.status_code == 401
+    assert error.value.detail == "Incorrect email or password"
+    verify.assert_called_once_with("password", user.hashed_password)
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_login_persists_complete_hashed_session_before_returning_tokens(
     monkeypatch,
 ):

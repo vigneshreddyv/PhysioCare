@@ -8,8 +8,8 @@ class ScheduleBlockIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     day_of_week: int = Field(ge=0, le=6)
     service_mode: Literal["clinic", "home_visit"]
-    start_time: str
-    end_time: str
+    start_time: str = Field(min_length=5, max_length=5)
+    end_time: str = Field(min_length=5, max_length=5)
 
 
 class ScheduleDateExceptionIn(BaseModel):

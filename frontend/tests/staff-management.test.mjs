@@ -72,7 +72,8 @@ test('staff management route is nested under the Admin-only protected route', as
   assert.match(appSource, /StaffManagement = lazy\(\(\) => import\('\.\/pages\/admin\/StaffManagement'\)\)/);
   assert.match(appSource, /allowedRoles=\{\['admin'\]\}[\s\S]*?<Route path="staff" element=\{<StaffManagement \/>} \/>/);
   assert.match(sidebarSource, /path: '\/admin\/staff', label: 'Staff Management'/);
-  assert.match(pageSource, /api\.get\('\/users\/staff'\)/);
+  assert.match(pageSource, /fetchClinicalPage\(staffPath, page\)/);
+  assert.match(pageSource, /<ClinicalPageNav label="Staff accounts"/);
   assert.match(pageSource, /api\.post\('\/users\/staff', payload\)/);
   assert.match(pageSource, /disabled=\{createStaff\.isPending\}/);
   assert.match(pageSource, /queryClient\.invalidateQueries\(\{ queryKey: \['staff'\] \}\)/);

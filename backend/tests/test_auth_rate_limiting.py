@@ -18,8 +18,11 @@ from app.services.auth_rate_limit_service import (
 )
 from app.models.auth_rate_limit import AuthRateLimitBucket
 from app.services.auth_service import AuthService
-from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.account_registration_repository import (
+    AccountRegistrationRepository,
+    DuplicateRegistrationEmail,
+)
 
 
 def request_for(peer: str, forwarded: str | None = None) -> Request:
@@ -226,9 +229,12 @@ async def test_public_duplicate_registration_hashes_password_and_returns_no_sign
         "app.services.auth_service.get_password_hash",
         lambda value: hashed.append(value) or "safe-hash",
     )
-    monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=object()))
-    create = AsyncMock()
-    monkeypatch.setattr(UserRepository, "create", create)
+    create = AsyncMock(side_effect=DuplicateRegistrationEmail())
+    monkeypatch.setattr(AccountRegistrationRepository, "create_with_profile", create)
+    monkeypatch.setattr(
+        "app.services.auth_service.User",
+        lambda **values: SimpleNamespace(**values),
+    )
     schema = UserRegister(
         email="existing@example.com",
         password="fictional-password",
@@ -239,20 +245,22 @@ async def test_public_duplicate_registration_hashes_password_and_returns_no_sign
 
     assert result is None
     assert hashed == ["fictional-password"]
-    create.assert_not_awaited()
+    create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_public_registration_race_returns_same_nondisclosing_result(monkeypatch):
     monkeypatch.setattr("app.services.auth_service.get_password_hash", lambda _value: "safe-hash")
     monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=None))
-    monkeypatch.setattr(UserRepository, "create", AsyncMock(side_effect=DuplicateKeyError("duplicate")))
+    monkeypatch.setattr(
+        AccountRegistrationRepository,
+        "create_with_profile",
+        AsyncMock(side_effect=DuplicateRegistrationEmail()),
+    )
     monkeypatch.setattr(
         "app.services.auth_service.User",
         lambda **values: SimpleNamespace(**values),
     )
-    create_patient = AsyncMock()
-    monkeypatch.setattr(ProfileRepository, "create_patient", create_patient)
 
     result = await AuthService.register(
         UserRegister(
@@ -263,7 +271,7 @@ async def test_public_registration_race_returns_same_nondisclosing_result(monkey
     )
 
     assert result is None
-    create_patient.assert_not_awaited()
+    AccountRegistrationRepository.create_with_profile.assert_awaited_once()
 
 
 @pytest.mark.asyncio

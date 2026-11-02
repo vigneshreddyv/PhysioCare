@@ -55,7 +55,6 @@ const AppointmentBooking = lazy(() => import('./pages/admin/AppointmentBooking')
 const Notifications = lazy(() => import('./pages/common/Notifications'));
 const AdminPatientEdit = lazy(() => import('./pages/admin/AdminPatientEdit'));
 const AdminPatientHistory = lazy(() => import('./pages/admin/AdminPatientHistory'));
-const PatientsCreate = lazy(() => import('./pages/admin/PatientsCreate'));
 const StaffManagement = lazy(() => import('./pages/admin/StaffManagement'));
 const AdminLaboratoryRequests = lazy(() => import('./pages/admin/AdminLaboratoryRequests'));
 const DemoServices = lazy(() => import('./pages/admin/DemoServices'));
@@ -234,7 +233,6 @@ export default function App() {
                 <Route path="patients" element={<PatientsList />} />
                 <Route path="care-management" element={<PatientsList />} />
                 <Route path="reports/new" element={<ReportAuthoring />} />
-                <Route path="patients-create" element={<PatientsCreate />} />
                 <Route path="staff" element={<StaffManagement />} />
                 <Route path="laboratory" element={<AdminLaboratoryRequests />} />
                 <Route path="patients-edit/:id" element={<AdminPatientEdit />} />

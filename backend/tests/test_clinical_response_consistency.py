@@ -218,7 +218,7 @@ async def test_doctor_appointment_missing_and_unassigned_are_identical(monkeypat
         with pytest.raises(HTTPException) as error:
             await AppointmentService.update_appointment(
                 "opaque-appointment-id",
-                AppointmentUpdate(status="in_progress"),
+                AppointmentUpdate(status="in_progress", expected_revision=0),
                 actor_user_id="doctor-user",
                 actor_role="doctor",
             )

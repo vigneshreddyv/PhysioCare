@@ -1,9 +1,12 @@
-import React, { useRef, useState } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../../context/useAuth';
 import api from '../../services/api';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
 import Skeleton from '../../components/common/Skeleton';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 
 const MAX_REPORT_BYTES = 5 * 1024 * 1024;
 const requestStatusLabels = {
@@ -11,15 +14,25 @@ const requestStatusLabels = {
 };
 
 export default function LaboratoryDashboard() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const fileInputs = useRef({});
   const [selectedFiles, setSelectedFiles] = useState({});
   const [uploadSuccess, setUploadSuccess] = useState({});
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+    setSelectedFiles({});
+    setUploadSuccess({});
+    fileInputs.current = {};
+  }, [user?.id]);
 
   const orders = useQuery({
-    queryKey: ['laboratorianOrders'],
-    queryFn: async () => (await api.get('/lab-requests/laboratory/assigned')).data,
+    queryKey: ['laboratorianOrders', user?.id, page],
+    queryFn: () => fetchClinicalPage('/lab-requests/laboratory/assigned', page),
+    gcTime: 0,
   });
+  const visibleOrders = orders.data?.data;
 
   const upload = useMutation({
     mutationFn: async ({ requestId, file }) => (
@@ -65,13 +78,13 @@ export default function LaboratoryDashboard() {
             <span className="portal-section__eyebrow">Assigned work</span>
             <h2 id="laboratory-orders-heading" className="font-headline-md text-headline-md">Laboratory orders</h2>
           </div>
-          <span className="portal-count-pill">{orders.data?.length || 0} orders</span>
+          <span className="portal-count-pill">{visibleOrders?.length || 0} on this page</span>
         </div>
-        {orders.isLoading ? <Skeleton variant="row" count={3} /> : !orders.data?.length ? (
+        {orders.isLoading ? <Skeleton variant="row" count={3} /> : !visibleOrders?.length ? (
           <div className="p-6"><EmptyState title="No assigned orders" message="Orders appear here only after an administrator assigns them to you." icon="biotech" /></div>
         ) : (
           <div className="reception-schedule-grid">
-            {orders.data.map((order) => {
+            {visibleOrders.map((order) => {
               const selection = selectedFiles[order.id];
               const isThisUpload = upload.isPending && upload.variables?.requestId === order.id;
               return (
@@ -110,6 +123,12 @@ export default function LaboratoryDashboard() {
             })}
           </div>
         )}
+        <ClinicalPageNav label="Laboratory orders" page={page} onPageChange={(next) => {
+          setSelectedFiles({});
+          setUploadSuccess({});
+          fileInputs.current = {};
+          setPage(next);
+        }} isLoading={orders.isLoading} itemCount={visibleOrders?.length || 0} />
       </section>
     </div>
   );

@@ -1,29 +1,42 @@
-import React from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import EmptyState from '../../components/common/EmptyState';
 import { format } from 'date-fns';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 export default function Billing() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const [page, setPage] = useState(1);
+  const [billingStatus, setBillingStatus] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const capturedReviewQuery = useQuery({
     queryKey: ['capturedPaymentReviews'],
     queryFn: async () => (await api.get('/payments/admin/captured-review')).data,
   });
   const { 
-    data: appointments, 
+    data: billingPage,
     isLoading, 
     error, 
     refetch 
   } = useQuery({
-    queryKey: ['billingRecords'],
+    queryKey: ['billingRecords', user?.id, page, billingStatus, startDate, endDate],
     queryFn: async () => {
-      const response = await api.get('/appointments');
-      return response.data;
-    }
+      const filters = new URLSearchParams();
+      if (billingStatus) filters.set('billing_status', billingStatus);
+      if (startDate) filters.set('start_date', startDate);
+      if (endDate) filters.set('end_date', endDate);
+      return fetchClinicalPage(`/appointments/admin/billing${filters.size ? `?${filters}` : ''}`, page);
+    },
+    gcTime: 0,
   });
+  const appointments = billingPage?.data;
   const reconcileCaptured = useMutation({
     mutationFn: async () => (await api.post('/payments/admin/reconcile-captured')).data,
     onSuccess: async () => Promise.all([
@@ -104,13 +117,18 @@ export default function Billing() {
       </section>
 
       <section className="portal-section-card overflow-hidden" aria-labelledby="billing-records-heading">
+        <div className="flex flex-wrap gap-3 p-4">
+          <label>Billing status <select value={billingStatus} onChange={(event) => { setBillingStatus(event.target.value); setPage(1); }}><option value="">All</option><option value="pending">Pending</option><option value="paid">Paid</option><option value="unconfigured">Unconfigured</option></select></label>
+          <label>From <input type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setPage(1); }} /></label>
+          <label>Through <input type="date" value={endDate} onChange={(event) => { setEndDate(event.target.value); setPage(1); }} /></label>
+        </div>
         <div className="portal-section-card__header">
           <div>
             <span className="portal-section__eyebrow">Appointment ledger</span>
             <h2 id="billing-records-heading" className="font-headline-md text-headline-md">Billing records</h2>
           </div>
           <span className="portal-count-pill">
-            {appointments?.length || 0} records
+            {appointments?.length || 0} on this page
           </span>
         </div>
 
@@ -188,6 +206,7 @@ export default function Billing() {
           </div>
           </>
         )}
+        {billingPage && <ClinicalPageNav label="Billing records" page={page} onPageChange={setPage} isLoading={isLoading} itemCount={appointments.length} hasNext={billingPage.hasNext} />}
       </section>
     </div>
   );

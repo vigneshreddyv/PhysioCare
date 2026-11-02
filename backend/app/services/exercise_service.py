@@ -5,6 +5,7 @@ from beanie import PydanticObjectId
 from app.core.time import utc_now
 from app.models.exercise import Exercise, ExerciseAssignment, ExerciseProgress
 from app.repositories.exercise_repository import ExerciseRepository
+from app.core.pagination import PageWindow
 from app.repositories.care_plan_repository import CarePlanRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.models.patient import Patient
@@ -49,7 +50,16 @@ class ExerciseService:
         return await ExerciseRepository.get_exercise_by_id(exercise_id)
 
     @staticmethod
-    async def list_exercises(active_only: bool = False) -> List[Exercise]:
+    async def list_exercises(
+        active_only: bool = False, page: PageWindow | None = None,
+        category: str | None = None, search: str | None = None,
+    ) -> List[Exercise]:
+        if page is not None:
+            if search is not None:
+                return await ExerciseRepository.list_page_exercises(active_only, page, category, search)
+            if category:
+                return await ExerciseRepository.list_page_exercises(active_only, page, category)
+            return await ExerciseRepository.list_page_exercises(active_only, page)
         return await ExerciseRepository.list_exercises(active_only)
 
     @staticmethod
@@ -123,11 +133,19 @@ class ExerciseService:
         return await ExerciseRepository.get_assignment_by_id(assignment_id)
 
     @staticmethod
-    async def list_assignments_for_patient(patient_id: str) -> List[ExerciseAssignment]:
+    async def list_assignments_for_patient(
+        patient_id: str, page: PageWindow | None = None,
+    ) -> List[ExerciseAssignment]:
+        if page is not None:
+            return await ExerciseRepository.list_page_assignments_by_patient(patient_id, page)
         return await ExerciseRepository.list_assignments_by_patient(patient_id)
 
     @staticmethod
-    async def list_assignments_for_care_plan(care_plan_id: str) -> List[ExerciseAssignment]:
+    async def list_assignments_for_care_plan(
+        care_plan_id: str, page: PageWindow | None = None,
+    ) -> List[ExerciseAssignment]:
+        if page is not None:
+            return await ExerciseRepository.list_page_assignments_by_care_plan(care_plan_id, page)
         return await ExerciseRepository.list_assignments_by_care_plan(care_plan_id)
 
     @staticmethod
@@ -148,6 +166,8 @@ class ExerciseService:
             await ExerciseService._authorize_doctor(
                 str(assignment.patient_id), actor_user_id, user_role
             )
+
+        expected_revision = update_data.pop("expected_revision", getattr(assignment, "revision", 0))
 
         # If user is a patient, enforce read-only on prescription parameters
         if user_role == "patient":
@@ -172,30 +192,35 @@ class ExerciseService:
                     raise ValueError(f"Invalid transition from in_progress to {new_status}")
 
         # Validate updating prescription values if updated by clinician
+        set_fields = {}
         if "sets" in update_data:
             if update_data["sets"] <= 0:
                 raise ValueError("Sets must be a positive integer.")
-            assignment.sets = update_data["sets"]
+            set_fields["sets"] = update_data["sets"]
 
         if "reps" in update_data:
             if update_data["reps"] <= 0:
                 raise ValueError("Reps must be a positive integer.")
-            assignment.reps = update_data["reps"]
+            set_fields["reps"] = update_data["reps"]
 
         if "duration_seconds" in update_data:
             if update_data["duration_seconds"] < 0:
                 raise ValueError("Duration seconds must be a non-negative integer.")
-            assignment.duration_seconds = update_data["duration_seconds"]
+            set_fields["duration_seconds"] = update_data["duration_seconds"]
 
         if "frequency" in update_data:
-            assignment.frequency = update_data["frequency"]
+            set_fields["frequency"] = update_data["frequency"]
 
         if "status" in update_data:
-            assignment.status = update_data["status"]
+            set_fields["status"] = update_data["status"]
 
-        assignment.updated_at = utc_now()
-        await assignment.save()
-        return assignment
+        set_fields["updated_at"] = utc_now()
+        return await ExerciseRepository.update_assignment_if_revision(
+            assignment_id,
+            patient_id=assignment.patient_id,
+            expected_revision=expected_revision,
+            set_fields=set_fields,
+        )
 
     @staticmethod
     async def create_progress_record(progress_data: dict, patient_user_id: str) -> ExerciseProgress:
@@ -207,6 +232,9 @@ class ExerciseService:
         assignment = await ExerciseRepository.get_assignment_by_id(str(assignment_id))
         if not assignment:
             raise ValueError("Assignment not found.")
+        expected_revision = progress_data.pop(
+            "expected_assignment_revision", getattr(assignment, "revision", 0)
+        )
 
         if str(assignment.patient_id) != str(patient.id):
             raise PermissionError("Assignment does not belong to the patient.")
@@ -223,6 +251,7 @@ class ExerciseService:
 
         # Expose relationship integrity fields
         progress = ExerciseProgress(
+            id=PydanticObjectId(),
             patient_id=assignment.patient_id,
             assignment_id=assignment.id,
             exercise_id=assignment.exercise_id,
@@ -235,21 +264,26 @@ class ExerciseService:
             notes=progress_data.get("notes")
         )
 
-        saved_progress = await ExerciseRepository.create_progress(progress)
-
-        # Update assignment lifecycle status if needed
-        if assignment.status == "assigned":
-            assignment.status = "in_progress"
-            await assignment.save()
-
-        if saved_progress.completion_status == "completed" and assignment.status == "in_progress":
-            assignment.status = "completed"
-            await assignment.save()
-
-        return saved_progress
+        next_status = assignment.status
+        if progress.completion_status == "completed":
+            next_status = "completed"
+        elif assignment.status == "assigned":
+            next_status = "in_progress"
+        return await ExerciseRepository.create_progress_with_assignment_transition(
+            progress,
+            assignment_id=str(assignment.id),
+            patient_id=assignment.patient_id,
+            expected_revision=expected_revision,
+            expected_status=assignment.status,
+            next_status=next_status,
+        )
 
     @staticmethod
-    async def list_progress_for_patient(patient_id: str) -> List[ExerciseProgress]:
+    async def list_progress_for_patient(
+        patient_id: str, page: PageWindow | None = None,
+    ) -> List[ExerciseProgress]:
+        if page is not None:
+            return await ExerciseRepository.list_page_progress_by_patient(patient_id, page)
         return await ExerciseRepository.list_progress_by_patient(patient_id)
 
     @staticmethod
@@ -258,121 +292,78 @@ class ExerciseService:
 
     @staticmethod
     async def get_exercise_progress_stats(patient_id: str) -> dict:
-        active_assignments = await ExerciseRepository.list_assignments_by_patient(patient_id)
-        progress_records = await ExerciseRepository.list_progress_by_patient(patient_id)
+        """Return patient-scoped summaries without materializing lifetime documents."""
+        from datetime import datetime, timedelta
 
-        # Get active care plan to obtain stage titles
-        from app.repositories.care_plan_repository import CarePlanRepository
-        care_plans = await CarePlanRepository.get_by_patient_id(patient_id)
-        active_plan = next((cp for cp in care_plans if cp.status == "active"), None)
-        stages_dict = {}
-        if active_plan:
-            stages_dict = {s.stage_id: s.title for s in active_plan.stages}
-
-        # Get catalog exercise titles
-        catalog = await ExerciseRepository.list_exercises()
-        exercise_names = {str(ex.id): ex.title for ex in catalog}
-
-        # Filter out cancelled assignments for active prescriptions calculation
-        non_cancelled_assignments = [a for a in active_assignments if a.status != "cancelled"]
-        total = len(non_cancelled_assignments)
-        completed = sum(1 for a in non_cancelled_assignments if a.status == "completed")
-        percentage = round((completed / total) * 100) if total > 0 else 100
-
-        # Construct weekly adherence log (Mon-Sun) of current week
-        from datetime import date, timedelta
         today = utc_now().date()
         start_of_week = today - timedelta(days=today.weekday())
-        days_mapping = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        week_start = datetime.combine(start_of_week, datetime.min.time())
+        next_day = datetime.combine(today + timedelta(days=1), datetime.min.time())
+
+        assignment_data = await ExerciseRepository.aggregate_assignment_stats(patient_id)
+        progress_data = await ExerciseRepository.aggregate_progress_stats(
+            patient_id, week_start, next_day,
+        )
+        stage_titles = await CarePlanRepository.get_active_stage_titles(patient_id)
+
+        assignment_summary = (assignment_data.get("summary") or [{}])[0]
+        progress_summary = (progress_data.get("summary") or [{}])[0]
+        total = assignment_summary.get("total", 0)
+        completed = assignment_summary.get("completed", 0)
+        percentage = round(completed / total * 100) if total else 100
+        week_dates = {row["_id"] for row in progress_data.get("week", [])}
         log = []
-
-        for i in range(7):
-            target_date = start_of_week + timedelta(days=i)
-            if target_date > today:
-                completed_val = None
-            else:
-                has_record = any(
-                    r.completed_at.date() == target_date 
-                    for r in progress_records
-                )
-                completed_val = has_record
-            log.append({"day": days_mapping[i], "completed": completed_val})
-
-        # Recent activity (5 most recent logs)
-        recent_activity = []
-        sorted_progress = sorted(progress_records, key=lambda r: r.completed_at, reverse=True)
-        for r in sorted_progress[:5]:
-            ex_name = exercise_names.get(str(r.exercise_id), "Unknown Exercise")
-            recent_activity.append({
-                "assignment_id": str(r.assignment_id),
-                "exercise_id": str(r.exercise_id),
-                "exercise_name": ex_name,
-                "completed_at": r.completed_at.isoformat(),
-                "completed_sets": r.completed_sets,
-                "completed_reps": r.completed_reps,
-                "duration_seconds": r.duration_seconds,
-                "completion_status": r.completion_status,
-                "notes": r.notes
+        for offset, day_name in enumerate(("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")):
+            day = start_of_week + timedelta(days=offset)
+            log.append({
+                "day": day_name,
+                "completed": None if day > today else day.isoformat() in week_dates,
             })
 
-        # Exercise breakdown (grouped by exercise ID)
-        exercise_breakdown = []
-        exercise_groups = {}
-        for r in progress_records:
-            eid = str(r.exercise_id)
-            if eid not in exercise_groups:
-                exercise_groups[eid] = []
-            exercise_groups[eid].append(r)
-
-        for eid, records in exercise_groups.items():
-            ex_name = exercise_names.get(eid, "Unknown Exercise")
-            comp_count = sum(1 for r in records if r.completion_status == "completed")
-            part_count = sum(1 for r in records if r.completion_status == "partial")
-
-            matching_assign = next((a for a in non_cancelled_assignments if str(a.exercise_id) == eid), None)
-            target_str = ""
-            if matching_assign:
-                target_str = f"{matching_assign.sets} sets x {matching_assign.reps} reps"
-
-            exercise_breakdown.append({
-                "exercise_id": eid,
-                "exercise_name": ex_name,
-                "performance_count": len(records),
-                "completed_sessions": comp_count,
-                "partial_sessions": part_count,
-                "latest_completion": max(r.completed_at for r in records).isoformat() if records else None,
-                "prescribed_target": target_str
-            })
-
-        # Stage breakdown
+        targets = {
+            str(row["_id"]): f'{row["sets"]} sets x {row["reps"]} reps'
+            for row in assignment_data.get("targets", [])
+        }
+        recent_activity = [
+            {
+                "assignment_id": str(row["assignment_id"]),
+                "exercise_id": str(row["exercise_id"]),
+                "exercise_name": row["exercise_name"],
+                "completed_at": row["completed_at"].isoformat(),
+                "completed_sets": row["completed_sets"],
+                "completed_reps": row["completed_reps"],
+                "duration_seconds": row["duration_seconds"],
+                "completion_status": row["completion_status"],
+                "notes": row.get("notes"),
+            }
+            for row in progress_data.get("recent", [])
+        ]
+        exercise_breakdown = [
+            {
+                "exercise_id": str(row["_id"]),
+                "exercise_name": row["exercise_name"],
+                "performance_count": row["performance_count"],
+                "completed_sessions": row["completed_sessions"],
+                "partial_sessions": row["partial_sessions"],
+                "latest_completion": row["latest_completion"].isoformat(),
+                "prescribed_target": targets.get(str(row["_id"]), ""),
+            }
+            for row in progress_data.get("exercises", [])
+        ]
+        stage_progress = {row["_id"]: row for row in progress_data.get("stages", [])}
         stage_breakdown = []
-        stage_assignments = {}
-        for a in non_cancelled_assignments:
-            sid = a.stage_id
-            if sid not in stage_assignments:
-                stage_assignments[sid] = []
-            stage_assignments[sid].append(a)
-
-        for sid, assigns in stage_assignments.items():
-            stage_title = stages_dict.get(sid, f"Stage {sid}")
-            assign_ids = {str(a.id) for a in assigns}
-            stage_records = [r for r in progress_records if str(r.assignment_id) in assign_ids]
-
-            comp_count = sum(1 for r in stage_records if r.completion_status == "completed")
-            recent_act = sorted(stage_records, key=lambda r: r.completed_at, reverse=True)
-            latest_time = recent_act[0].completed_at.isoformat() if recent_act else None
-
+        for row in assignment_data.get("stages", []):
+            stage_id = row["_id"]
+            activity = stage_progress.get(stage_id, {})
+            latest = activity.get("latest_completion")
             stage_breakdown.append({
-                "stage_id": sid,
-                "stage_title": stage_title,
-                "assigned_exercise_count": len(assigns),
-                "exercises_with_activity": len({str(r.exercise_id) for r in stage_records}),
-                "completed_sessions": comp_count,
-                "latest_completion": latest_time
+                "stage_id": stage_id,
+                "stage_title": stage_titles.get(stage_id, f"Stage {stage_id}"),
+                "assigned_exercise_count": row["assigned_exercise_count"],
+                "exercises_with_activity": activity.get("exercises_with_activity", 0),
+                "completed_sessions": activity.get("completed_sessions", 0),
+                "latest_completion": latest.isoformat() if latest else None,
             })
-
-        completed_sessions = sum(1 for r in progress_records if r.completion_status == "completed")
-        partial_sessions = sum(1 for r in progress_records if r.completion_status == "partial")
 
         return {
             "percentage": percentage,
@@ -380,12 +371,12 @@ class ExerciseService:
             "total": total,
             "log": log,
             "period": "current_week",
-            "completed_sessions": completed_sessions,
-            "partial_sessions": partial_sessions,
-            "active_assignments": len(non_cancelled_assignments),
+            "completed_sessions": progress_summary.get("completed_sessions", 0),
+            "partial_sessions": progress_summary.get("partial_sessions", 0),
+            "active_assignments": total,
             "completion_percentage": percentage,
             "recent_activity": recent_activity,
             "exercise_breakdown": exercise_breakdown,
-            "stage_breakdown": stage_breakdown
+            "stage_breakdown": stage_breakdown,
         }
 

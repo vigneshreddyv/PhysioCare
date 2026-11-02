@@ -4,11 +4,28 @@ from beanie import PydanticObjectId
 from app.core.time import utc_now
 from app.models.exercise import ExerciseProgress
 from app.services.exercise_service import ExerciseService
+from app.repositories.exercise_repository import ExerciseRepository
 
 @pytest.fixture(autouse=True)
 def mock_progress_insert_globally():
     with patch("app.models.exercise.ExerciseProgress.insert", new_callable=AsyncMock) as mock_ins:
         yield mock_ins
+
+
+@pytest.fixture(autouse=True)
+def mock_progress_transaction_repository():
+    async def apply_transition(progress, **kwargs):
+        assignment = await ExerciseRepository.get_assignment_by_id(kwargs["assignment_id"])
+        assignment.status = kwargs["next_status"]
+        assignment.revision = kwargs["expected_revision"] + 1
+        return progress
+
+    with patch.object(
+        ExerciseRepository,
+        "create_progress_with_assignment_transition",
+        side_effect=apply_transition,
+    ):
+        yield
 
 
 @pytest.mark.asyncio
@@ -108,19 +125,12 @@ async def test_create_progress_cancelled_assignment_rejected():
 
 @pytest.mark.asyncio
 async def test_get_exercise_progress_stats():
-    # Mock active assignments and progress logs list
-    mock_assign = MagicMock()
-    mock_assign.status = "completed"
-    
-    mock_record = MagicMock()
-    # Mock date mapping check
-    mock_record.completed_at = utc_now()
-
-    with patch("app.repositories.exercise_repository.ExerciseRepository.list_assignments_by_patient", return_value=[mock_assign]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_progress_by_patient", return_value=[mock_record]), \
-         patch("app.repositories.care_plan_repository.CarePlanRepository.get_by_patient_id", return_value=[]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_exercises", return_value=[]):
-        
+    with patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_assignment_stats",
+               new_callable=AsyncMock, return_value={"summary": [{"total": 1, "completed": 1}]}), \
+         patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_progress_stats",
+               new_callable=AsyncMock, return_value={"week": [{"_id": utc_now().date().isoformat()}]}), \
+         patch("app.repositories.care_plan_repository.CarePlanRepository.get_active_stage_titles",
+               new_callable=AsyncMock, return_value={}):
         stats = await ExerciseService.get_exercise_progress_stats("patient_id_1")
         assert stats["percentage"] == 100
         assert stats["completed"] == 1
@@ -190,93 +200,69 @@ async def test_progress_record_negative_metrics_rejected():
 
 @pytest.mark.asyncio
 async def test_longitudinal_progress_analytics():
-    # 1. Test zero assignments case (division-by-zero protection)
-    with patch("app.repositories.exercise_repository.ExerciseRepository.list_assignments_by_patient", return_value=[]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_progress_by_patient", return_value=[]), \
-         patch("app.repositories.care_plan_repository.CarePlanRepository.get_by_patient_id", return_value=[]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_exercises", return_value=[]):
-        
+    from datetime import timedelta
+
+    with patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_assignment_stats",
+               new_callable=AsyncMock, return_value={}), \
+         patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_progress_stats",
+               new_callable=AsyncMock, return_value={}), \
+         patch("app.repositories.care_plan_repository.CarePlanRepository.get_active_stage_titles",
+               new_callable=AsyncMock, return_value={}):
         stats = await ExerciseService.get_exercise_progress_stats("patient_1")
         assert stats["percentage"] == 100
         assert stats["completed_sessions"] == 0
-        assert len(stats["recent_activity"]) == 0
-        assert len(stats["exercise_breakdown"]) == 0
-        assert len(stats["stage_breakdown"]) == 0
+        assert stats["recent_activity"] == []
+        assert stats["exercise_breakdown"] == []
+        assert stats["stage_breakdown"] == []
 
-    # 2. Test multiple assignments, some cancelled, mixed completion statuses
-    mock_ex = MagicMock()
-    mock_ex.id = PydanticObjectId("000000000000000000000003")
-    mock_ex.title = "Flexion Stretch"
-
-    mock_assign_1 = MagicMock()
-    mock_assign_1.id = PydanticObjectId("000000000000000000000001")
-    mock_assign_1.exercise_id = mock_ex.id
-    mock_assign_1.status = "completed"
-    mock_assign_1.sets = 3
-    mock_assign_1.reps = 10
-    mock_assign_1.stage_id = "st_1"
-
-    # Cancelled assignment should be ignored in active total
-    mock_assign_cancelled = MagicMock()
-    mock_assign_cancelled.id = PydanticObjectId("000000000000000000000002")
-    mock_assign_cancelled.status = "cancelled"
-
-    from datetime import timedelta
-    p1 = MagicMock()
-    p1.assignment_id = mock_assign_1.id
-    p1.exercise_id = mock_ex.id
-    p1.completion_status = "completed"
-    p1.completed_at = utc_now()
-    p1.completed_sets = 3
-    p1.completed_reps = 10
-    p1.duration_seconds = 120
-    p1.notes = "No pain"
-
-    p2 = MagicMock()
-    p2.assignment_id = mock_assign_1.id
-    p2.exercise_id = mock_ex.id
-    p2.completion_status = "partial"
-    p2.completed_at = utc_now() - timedelta(hours=2)
-    p2.completed_sets = 2
-    p2.completed_reps = 10
-    p2.duration_seconds = 100
-    p2.notes = "Slight stiffness"
-
-    mock_cp = MagicMock()
-    mock_cp.status = "active"
-    stage_mock = MagicMock()
-    stage_mock.stage_id = "st_1"
-    stage_mock.title = "Milestone Phase 1"
-    mock_cp.stages = [stage_mock]
-
-    with patch("app.repositories.exercise_repository.ExerciseRepository.list_assignments_by_patient", return_value=[mock_assign_1, mock_assign_cancelled]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_progress_by_patient", return_value=[p1, p2]), \
-         patch("app.repositories.care_plan_repository.CarePlanRepository.get_by_patient_id", return_value=[mock_cp]), \
-         patch("app.repositories.exercise_repository.ExerciseRepository.list_exercises", return_value=[mock_ex]):
-        
+    exercise_id = PydanticObjectId("000000000000000000000003")
+    assignment_id = PydanticObjectId("000000000000000000000001")
+    now = utc_now()
+    assignments = {
+        "summary": [{"total": 1, "completed": 1}],
+        "targets": [{"_id": exercise_id, "sets": 3, "reps": 10}],
+        "stages": [{"_id": "st_1", "assigned_exercise_count": 1}],
+    }
+    progress = {
+        "summary": [{"completed_sessions": 1, "partial_sessions": 1}],
+        "week": [{"_id": now.date().isoformat()}],
+        "recent": [
+            {"assignment_id": assignment_id, "exercise_id": exercise_id,
+             "exercise_name": "Flexion Stretch", "completed_at": now,
+             "completed_sets": 3, "completed_reps": 10, "duration_seconds": 120,
+             "completion_status": "completed", "notes": "No pain"},
+            {"assignment_id": assignment_id, "exercise_id": exercise_id,
+             "exercise_name": "Flexion Stretch", "completed_at": now - timedelta(hours=2),
+             "completed_sets": 2, "completed_reps": 10, "duration_seconds": 100,
+             "completion_status": "partial", "notes": "Slight stiffness"},
+        ],
+        "exercises": [{"_id": exercise_id, "exercise_name": "Flexion Stretch",
+                       "performance_count": 2, "completed_sessions": 1,
+                       "partial_sessions": 1, "latest_completion": now}],
+        "stages": [{"_id": "st_1", "exercises_with_activity": 1,
+                    "completed_sessions": 1, "latest_completion": now}],
+    }
+    with patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_assignment_stats",
+               new_callable=AsyncMock, return_value=assignments) as assignment_query, \
+         patch("app.repositories.exercise_repository.ExerciseRepository.aggregate_progress_stats",
+               new_callable=AsyncMock, return_value=progress) as progress_query, \
+         patch("app.repositories.care_plan_repository.CarePlanRepository.get_active_stage_titles",
+               new_callable=AsyncMock, return_value={"st_1": "Milestone Phase 1"}) as titles_query:
         stats = await ExerciseService.get_exercise_progress_stats("patient_1")
-        assert stats["percentage"] == 100
-        assert stats["completed_sessions"] == 1
-        assert stats["partial_sessions"] == 1
-        assert stats["active_assignments"] == 1  # Cancelled assignment correctly excluded
 
-        # Recent activity sorted chronological order checks
-        assert len(stats["recent_activity"]) == 2
-        assert stats["recent_activity"][0]["completion_status"] == "completed"  # p1 is newer
-        assert stats["recent_activity"][1]["completion_status"] == "partial"
-
-        # Exercise Breakdown checking
-        assert len(stats["exercise_breakdown"]) == 1
-        eb = stats["exercise_breakdown"][0]
-        assert eb["exercise_name"] == "Flexion Stretch"
-        assert eb["completed_sessions"] == 1
-        assert eb["partial_sessions"] == 1
-
-        # Stage Breakdown checking
-        assert len(stats["stage_breakdown"]) == 1
-        sb = stats["stage_breakdown"][0]
-        assert sb["stage_title"] == "Milestone Phase 1"
-        assert sb["assigned_exercise_count"] == 1
-        assert sb["completed_sessions"] == 1
+    assignment_query.assert_awaited_once_with("patient_1")
+    progress_query.assert_awaited_once()
+    titles_query.assert_awaited_once_with("patient_1")
+    assert stats["percentage"] == 100
+    assert stats["completed_sessions"] == 1
+    assert stats["partial_sessions"] == 1
+    assert stats["active_assignments"] == 1
+    assert stats["recent_activity"][0]["completion_status"] == "completed"
+    assert stats["recent_activity"][1]["completion_status"] == "partial"
+    assert stats["exercise_breakdown"][0]["exercise_name"] == "Flexion Stretch"
+    assert stats["exercise_breakdown"][0]["prescribed_target"] == "3 sets x 10 reps"
+    assert stats["stage_breakdown"][0]["stage_title"] == "Milestone Phase 1"
+    assert stats["stage_breakdown"][0]["completed_sessions"] == 1
+    assert any(day["completed"] is True for day in stats["log"])
 
 

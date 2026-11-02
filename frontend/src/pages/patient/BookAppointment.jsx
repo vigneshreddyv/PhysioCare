@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { DayPicker } from 'react-day-picker';
@@ -9,6 +9,8 @@ import Button from '../../components/common/Button';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import { isOutsideBookingWindow } from '../../utils/clinicDate';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 
 let razorpayCheckoutPromise;
 
@@ -41,6 +43,7 @@ export default function BookAppointment() {
   const [selectedTime, setSelectedTime] = useState('');
   const [reason, setReason] = useState('');
   const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorPage, setDoctorPage] = useState(1);
   const [handoffNotice, setHandoffNotice] = useState('');
   const [slotNotice, setSlotNotice] = useState('');
   const [confirmedAppointment, setConfirmedAppointment] = useState(null);
@@ -52,23 +55,22 @@ export default function BookAppointment() {
 
   // Fetch doctors
   const { 
-    data: doctors, 
+    data: doctorResults,
     isLoading: loadingDoctors, 
     error: doctorsError,
     refetch: refetchDoctors,
   } = useQuery({
-    queryKey: ['bookingDoctors'],
-    queryFn: async () => {
-      const response = await api.get('/users/public/doctors');
-      return response.data;
-    }
+    queryKey: ['bookingDoctors', doctorQuery.trim(), doctorPage],
+    queryFn: () => fetchClinicalPage(
+      `/users/public/doctors?search=${encodeURIComponent(doctorQuery.trim())}`,
+      doctorPage,
+    ),
+    gcTime: 0,
   });
-  const normalizedDoctorQuery = doctorQuery.trim().toLowerCase();
-  const visibleDoctors = useMemo(() => (doctors || []).filter((doctor) => (
-    [doctor.full_name, doctor.specialization, doctor.qualifications, ...(doctor.specialties || [])]
-      .filter(Boolean)
-      .some((value) => value.toLowerCase().includes(normalizedDoctorQuery))
-  )), [doctors, normalizedDoctorQuery]);
+  const doctors = doctorResults?.data;
+  const visibleDoctors = selectedDoctor && !doctors?.some((doctor) => doctor.id === selectedDoctor.id)
+    ? [selectedDoctor, ...(doctors || [])]
+    : doctors || [];
 
   const selectedDateKey = selectedDate ? format(selectedDate, 'yyyy-MM-dd') : null;
   const {
@@ -89,7 +91,7 @@ export default function BookAppointment() {
   const paymentAppointmentQuery = useQuery({
     queryKey: ['appointments', 'payment-resume', paymentAppointmentId],
     enabled: Boolean(paymentAppointmentId),
-    queryFn: async () => (await api.get('/appointments')).data,
+    queryFn: async () => (await api.get(`/appointments/${encodeURIComponent(paymentAppointmentId)}`)).data,
   });
   const {
     data: bookingWindow,
@@ -272,8 +274,8 @@ export default function BookAppointment() {
 
   useEffect(() => {
     if (!paymentAppointmentId || !paymentAppointmentQuery.data) return;
-    const appointment = paymentAppointmentQuery.data.find((item) => item.id === paymentAppointmentId);
-    if (!appointment || appointment.service_mode !== 'clinic') {
+    const appointment = paymentAppointmentQuery.data;
+    if (!appointment || appointment.id !== paymentAppointmentId || appointment.service_mode !== 'clinic') {
       setBookingResumeError('This clinic appointment could not be loaded for payment. Open its history record and try again.');
       return;
     }
@@ -455,8 +457,8 @@ export default function BookAppointment() {
                 id="booking-clinician-search"
                 type="search"
                 value={doctorQuery}
-                onChange={(event) => setDoctorQuery(event.target.value)}
-                placeholder="Search by name, specialty, or focus area"
+                onChange={(event) => { setDoctorQuery(event.target.value); setDoctorPage(1); }}
+                placeholder="Search by clinician name"
                 aria-controls="booking-clinician-results"
               />
             </label>
@@ -484,6 +486,8 @@ export default function BookAppointment() {
               </div>
             </div>
           )}
+          <ClinicalPageNav label="Booking clinicians" page={doctorPage} onPageChange={setDoctorPage}
+            isLoading={loadingDoctors} itemCount={doctors?.length || 0} hasNext={doctorResults?.hasNext} />
           </>
         ) : (
           <div className="patient-booking__empty-doctors" role="status">

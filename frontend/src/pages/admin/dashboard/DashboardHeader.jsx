@@ -34,9 +34,6 @@ export default function DashboardHeader() {
         <Button variant="outline" size="sm" className="bg-white/10 !text-white !border-white/30 hover:!bg-white/20" onClick={() => navigate('/admin/appointment-booking')}>
           Schedule Appointment
         </Button>
-        <Button variant="patientPrimary" size="sm" onClick={() => navigate('/admin/patients-create')}>
-          New Patient
-        </Button>
       </div>
     </header>
   );

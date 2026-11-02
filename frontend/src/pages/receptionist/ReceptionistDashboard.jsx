@@ -1,4 +1,6 @@
-import React from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format, parseISO } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -11,13 +13,30 @@ import Skeleton from '../../components/common/Skeleton';
 export default function ReceptionistDashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: appointments, isLoading, error, refetch } = useQuery({
-    queryKey: ['receptionSchedule'],
-    queryFn: async () => (await api.get('/appointments/reception')).data,
+  const [schedulePage, setSchedulePage] = useState(1);
+  const [requestPage, setRequestPage] = useState(1);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const scheduleParams = new URLSearchParams();
+  if (startDate) scheduleParams.set('start_date', startDate);
+  if (endDate) scheduleParams.set('end_date', endDate);
+  const schedulePath = `/appointments/reception${scheduleParams.size ? `?${scheduleParams}` : ''}`;
+  const { data: schedule, isLoading, error, refetch } = useQuery({
+    queryKey: ['receptionSchedule', schedulePage, startDate, endDate],
+    queryFn: () => fetchClinicalPage(schedulePath, schedulePage),
+    gcTime: 0,
+  });
+  const summary = useQuery({
+    queryKey: ['receptionScheduleSummary', startDate, endDate],
+    queryFn: async ({ signal }) => (await api.get('/appointments/reception/summary', {
+      params: { start_date: startDate || undefined, end_date: endDate || undefined }, signal,
+    })).data,
+    gcTime: 0,
   });
   const homeRequests = useQuery({
-    queryKey: ['receptionHomeVisitRequests'],
-    queryFn: async () => (await api.get('/home-visit-requests/reception')).data,
+    queryKey: ['receptionHomeVisitRequests', requestPage],
+    queryFn: () => fetchClinicalPage('/home-visit-requests/reception', requestPage),
+    gcTime: 0,
   });
   const cancelMutation = useMutation({
     mutationFn: async (appointmentId) => (
@@ -25,11 +44,13 @@ export default function ReceptionistDashboard() {
     ).data,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['receptionSchedule'] });
+      queryClient.invalidateQueries({ queryKey: ['receptionScheduleSummary'] });
       queryClient.invalidateQueries({ queryKey: ['appointmentAvailability'] });
     },
   });
 
-  if (error || homeRequests.error) return <ErrorState message="Could not load reception operations." onRetry={() => { refetch(); homeRequests.refetch(); }} />;
+  const appointments = schedule?.data || [];
+  const requests = homeRequests.data?.data || [];
 
   return (
     <div className="portal-page animate-fade-in">
@@ -50,6 +71,10 @@ export default function ReceptionistDashboard() {
           {cancelMutation.error?.response?.data?.detail || 'The appointment was not cancelled.'}
         </div>
       )}
+      <div className="flex flex-wrap gap-3" aria-label="Reception schedule dates">
+        <label>From <input type="date" value={startDate} max={endDate || undefined} onChange={(event) => { setStartDate(event.target.value); setSchedulePage(1); }} /></label>
+        <label>Through <input type="date" value={endDate} min={startDate || undefined} onChange={(event) => { setEndDate(event.target.value); setSchedulePage(1); }} /></label>
+      </div>
 
       <section className="portal-section-card" aria-labelledby="reception-schedule-heading">
         <div className="portal-section-card__header">
@@ -57,10 +82,12 @@ export default function ReceptionistDashboard() {
             <span className="portal-section__eyebrow">Active schedule</span>
             <h2 id="reception-schedule-heading" className="font-headline-md text-headline-md">Scheduled and in-progress appointments</h2>
           </div>
-          <span className="portal-count-pill">{appointments?.length || 0} appointments</span>
+          <span className="portal-count-pill">{summary.data?.active_appointments ?? '—'} active appointments</span>
         </div>
+        {summary.error && <ErrorState message="Could not load the active appointment count." onRetry={() => summary.refetch()} />}
+        {error && <ErrorState message="Could not load the reception schedule." onRetry={() => refetch()} />}
 
-        {isLoading ? <Skeleton variant="row" count={3} /> : !appointments?.length ? (
+        {isLoading ? <Skeleton variant="row" count={3} /> : error ? null : !appointments.length ? (
           <EmptyState title="No active appointments" message="New bookings will appear here without clinical notes or history." icon="event_available" />
         ) : (
           <div className="reception-schedule-grid">
@@ -90,18 +117,21 @@ export default function ReceptionistDashboard() {
             ))}
           </div>
         )}
+        {!error && <ClinicalPageNav label="Reception schedule" page={schedulePage} onPageChange={setSchedulePage}
+          isLoading={isLoading} itemCount={appointments.length} hasNext={schedule?.hasNext} />}
       </section>
 
       <section className="portal-section-card" aria-labelledby="reception-home-requests-heading">
         <div className="portal-section-card__header">
           <div><span className="portal-section__eyebrow">Home-visit coordination</span><h2 id="reception-home-requests-heading" className="font-headline-md text-headline-md">Clinic-approved requests</h2></div>
-          <span className="portal-count-pill">{homeRequests.data?.length || 0} requests</span>
+          <span className="portal-count-pill">{requests.length} on this page</span>
         </div>
-        {homeRequests.isLoading ? <Skeleton variant="row" count={2} /> : !homeRequests.data?.length ? (
+        {homeRequests.error && <ErrorState message="Could not load approved home-visit requests." onRetry={() => homeRequests.refetch()} />}
+        {homeRequests.isLoading ? <Skeleton variant="row" count={2} /> : homeRequests.error ? null : !requests.length ? (
           <div className="p-6"><EmptyState title="No requests ready for coordination" message="Only clinic-approved requests appear here. They are not confirmed visits and reserve no capacity." icon="home_health" /></div>
         ) : (
           <div className="reception-schedule-grid">
-            {homeRequests.data.map((request) => <article key={request.id} className="portal-mobile-record">
+            {requests.map((request) => <article key={request.id} className="portal-mobile-record">
               <div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Approved for coordination</p><h3 className="font-semibold">{request.patient_name}</h3><p className="text-sm text-on-surface-variant">Preferred: {request.preferred_doctor_name}</p></div>
               <div className="portal-mobile-record__row"><span>Email</span><strong className="break-all">{request.patient_email}</strong></div>
               <div className="portal-mobile-record__row"><span>Phone</span><strong>{request.patient_phone || 'Not provided'}</strong></div>
@@ -110,6 +140,8 @@ export default function ReceptionistDashboard() {
             </article>)}
           </div>
         )}
+        {!homeRequests.error && <ClinicalPageNav label="Reception home-visit requests" page={requestPage} onPageChange={setRequestPage}
+          isLoading={homeRequests.isLoading} itemCount={requests.length} hasNext={homeRequests.data?.hasNext} />}
       </section>
     </div>
   );

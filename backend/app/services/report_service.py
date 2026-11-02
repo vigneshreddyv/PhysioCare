@@ -7,6 +7,7 @@ from app.models.report import Report
 from app.models.patient import Patient
 from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
 from app.repositories.report_repository import BookingClaimFailed, ReportRepository
+from app.core.pagination import PageWindow
 from app.services.clinical_authorization import require_doctor_patient_access
 
 
@@ -134,7 +135,14 @@ class ReportService:
         return created_report
 
     @staticmethod
-    async def get_reports_by_patient_id(patient_id: str) -> List[Report]:
+    async def get_reports_by_patient_id(
+        patient_id: str, page: PageWindow | None = None,
+        search: str | None = None,
+    ) -> List[Report]:
+        if page is not None:
+            if search:
+                return await ReportRepository.get_page_by_patient_id(patient_id, page, search)
+            return await ReportRepository.get_page_by_patient_id(patient_id, page)
         return await ReportRepository.get_by_patient_id(patient_id)
 
     @staticmethod

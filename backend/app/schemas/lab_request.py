@@ -18,7 +18,7 @@ class LabRequestCreate(BaseModel):
     home_address: str | None = Field(default=None, min_length=10, max_length=500)
     city: str | None = Field(default=None, min_length=2, max_length=100)
     save_address: bool = False
-    demo_rehearsal_tag: str | None = None
+    demo_rehearsal_tag: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
     def validate_request(self):

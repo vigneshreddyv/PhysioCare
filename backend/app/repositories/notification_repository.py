@@ -1,6 +1,7 @@
 from typing import List, Optional
 from beanie import PydanticObjectId
 from app.models.notification import Notification
+from app.core.pagination import PageWindow
 
 class NotificationRepository:
     @staticmethod
@@ -19,6 +20,14 @@ class NotificationRepository:
         return await Notification.find(
             Notification.recipient_user_id == PydanticObjectId(recipient_user_id)
         ).sort(-Notification.created_at).to_list()
+
+    @staticmethod
+    async def list_page_by_recipient_id(
+        recipient_user_id: str, page: PageWindow,
+    ) -> List[Notification]:
+        return await Notification.find({
+            "recipient_user_id": PydanticObjectId(recipient_user_id),
+        }).sort("-created_at", "-_id").skip(page.offset).limit(page.size).to_list()
 
     @staticmethod
     async def get_unread_count(recipient_user_id: str) -> int:

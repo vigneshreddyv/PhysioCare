@@ -1,9 +1,9 @@
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { DashboardHeader, DashboardStats, DashboardCharts, RecentAppointments, RecentActivity } from './dashboard';
 import ErrorState from '../../components/common/ErrorState';
-import subDays from 'date-fns/subDays';
 
 export default function AdminDashboard() {
   const queryClient = useQueryClient();
@@ -26,30 +26,38 @@ export default function AdminDashboard() {
     error: appointmentsError,
     refetch: refetchAppointments,
   } = useQuery({
-    queryKey: ['appointments'],
+    queryKey: ['appointments', 'admin-dashboard'],
     queryFn: async () => {
-      const response = await api.get('/appointments');
+      const response = await fetchClinicalPage('/appointments');
       return response.data;
     },
+    gcTime: 0,
+  });
+  const activity = useQuery({
+    queryKey: ['adminDailyActivity'],
+    queryFn: async () => (await api.get('/analytics/admin-daily-activity')).data,
   });
 
   const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }) => {
+    mutationFn: async ({ id, status, revision }) => {
       const response = await api.patch(`/appointments/${id}`, {
         status,
+        expected_revision: revision,
       });
       return response.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
       queryClient.invalidateQueries({ queryKey: ['adminStats'] });
+      queryClient.invalidateQueries({ queryKey: ['adminDailyActivity'] });
     },
   });
 
-  const handleStatusChange = (id, newStatus) => {
+  const handleStatusChange = (id, newStatus, revision) => {
     updateStatusMutation.mutate({
       id,
       status: newStatus,
+      revision,
     });
   };
 
@@ -57,7 +65,7 @@ export default function AdminDashboard() {
     refetchAppointments();
   };
 
-  if (statsError || appointmentsError) {
+  if (statsError || appointmentsError || activity.error) {
     return (
       <ErrorState
         message="Could not connect to the database. Make sure the backend server is running."
@@ -70,17 +78,8 @@ export default function AdminDashboard() {
   const notifications = [];
 
   // Add notification for new appointments today
-  const today = new Date();
-  const yesterday = subDays(today, 1);
-  const todayAppointments = appointments?.filter(apt => {
-    const aptDate = new Date(apt.appointment_date);
-    return aptDate.toDateString() === today.toDateString();
-  })?.length || 0;
-
-  const yesterdayAppointments = appointments?.filter(apt => {
-    const aptDate = new Date(apt.appointment_date);
-    return aptDate.toDateString() === yesterday.toDateString();
-  })?.length || 0;
+  const todayAppointments = activity.data?.today_appointments || 0;
+  const yesterdayAppointments = activity.data?.yesterday_appointments || 0;
 
   if (todayAppointments > 0) {
     const change = todayAppointments - yesterdayAppointments;
@@ -121,15 +120,19 @@ export default function AdminDashboard() {
         date={new Date()}
         notifications={notifications}
       />
+      {updateStatusMutation.isError && (
+        <div className="patient-booking__submit-error" role="alert">
+          {updateStatusMutation.error?.response?.status === 409
+            ? 'This appointment changed elsewhere. Refresh the appointment list and review it before retrying.'
+            : 'The appointment status could not be updated. Refresh the list and try again.'}
+        </div>
+      )}
       <div className="portal-dashboard-grid grid gap-6">
-        <DashboardStats
-          stats={stats}
-          appointments={appointments}
-        />
+        <DashboardStats stats={stats} activity={activity.data} />
         <DashboardCharts
           stats={stats}
-          statsLoading={statsLoading}
-          appointments={appointments}
+          statsLoading={statsLoading || activity.isLoading}
+          activity={activity.data}
         />
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <RecentAppointments

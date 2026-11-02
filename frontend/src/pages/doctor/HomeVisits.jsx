@@ -1,15 +1,22 @@
-import React from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import api from '../../services/api';
+import { useAuth } from '../../context/useAuth';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import EmptyState from '../../components/common/EmptyState';
 
 export default function HomeVisits() {
-  const { data: requests, isLoading, error, refetch } = useQuery({
-    queryKey: ['doctorHomeVisitRequests'],
-    queryFn: async () => (await api.get('/home-visit-requests/doctor')).data,
+  const { user } = useAuth();
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [user?.id]);
+  const { data: requestPage, isLoading, error, refetch } = useQuery({
+    queryKey: ['doctorHomeVisitRequests', user?.id, page],
+    queryFn: () => fetchClinicalPage('/home-visit-requests/doctor', page),
+    gcTime: 0,
   });
+  const requests = requestPage?.data;
 
   if (error) return <ErrorState message="Could not load assigned home-visit requests." onRetry={() => refetch()} />;
 
@@ -22,7 +29,7 @@ export default function HomeVisits() {
       </header>
       <div className="portal-trust-note" role="note"><span className="material-symbols-outlined" aria-hidden="true">info</span><span>These are not confirmed or scheduled visits. No time, capacity, coverage, or service-area decision has been made.</span></div>
       <section className="portal-section-card" aria-labelledby="doctor-home-requests-heading">
-        <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Selected clinician only</span><h2 id="doctor-home-requests-heading" className="font-headline-md text-headline-md">Approved for coordination</h2></div><span className="portal-count-pill">{requests?.length || 0} requests</span></div>
+        <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Selected clinician only</span><h2 id="doctor-home-requests-heading" className="font-headline-md text-headline-md">Approved for coordination</h2></div><span className="portal-count-pill">{requests?.length || 0} on this page</span></div>
         {isLoading ? <Skeleton variant="row" count={2} /> : !requests?.length ? <div className="p-6"><EmptyState title="No assigned requests" message="Only clinic-approved requests that specifically name you appear here." icon="home_health" /></div> : (
           <div className="reception-schedule-grid">
             {requests.map((request) => <article key={request.id} className="portal-mobile-record">
@@ -33,6 +40,7 @@ export default function HomeVisits() {
             </article>)}
           </div>
         )}
+        <ClinicalPageNav label="Assigned home visits" page={page} onPageChange={setPage} isLoading={isLoading} itemCount={requests?.length || 0} />
       </section>
     </div>
   );

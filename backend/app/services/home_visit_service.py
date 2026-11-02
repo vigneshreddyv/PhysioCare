@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from beanie import PydanticObjectId
@@ -16,8 +17,12 @@ from app.core.appointment_time import (
 from app.core.config import settings
 from app.models.appointment import Appointment
 from app.models.home_visit_request import HomeVisitRequest
+from app.models.patient import Patient
+from app.models.user import User
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.demo_service_repository import DemoServiceRepository
+from app.repositories.home_visit_query_repository import HomeVisitQueryRepository
+from app.core.pagination import PageWindow
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.home_visit import (
@@ -36,20 +41,25 @@ from app.services.clinician_schedule_service import ClinicianScheduleService
 
 
 class HomeVisitService:
-    NO_PREFERENCE_DOCTOR_ID = "no_preference"
+    @staticmethod
+    async def _persist_requested_address(patient, schema: HomeVisitBookingCreate) -> None:
+        """Idempotently finish the optional preference write on initial or retry."""
+        if schema.save_address and patient.saved_home_address != schema.home_address:
+            patient.saved_home_address = schema.home_address
+            await ProfileRepository.save_patient(patient)
 
     @staticmethod
-    async def _eligible_home_visit_doctors():
-        eligible = []
-        for doctor in await ProfileRepository.list_doctors():
-            user = await UserRepository.get_by_id(str(doctor.user_id))
-            if (
-                user
-                and user.is_active
-                and getattr(doctor, "accepts_home_visits", True)
-            ):
-                eligible.append(doctor)
-        return sorted(eligible, key=lambda item: str(item.id))
+    async def search_admin_entitlements(page: PageWindow, search: str) -> list[AdminDemoEntitlementOut]:
+        rows = await DemoServiceRepository.search_entitlements(page, search)
+        return [AdminDemoEntitlementOut(
+            patient_id=str(row["patient"]["_id"]),
+            patient_name=row["full_name"], patient_email=row["email"],
+            patient_phone=row["patient"].get("phone"),
+            active=bool(row.get("entitlement") and row["entitlement"][0].get("active")
+                        and settings.DEMO_HOME_VISIT_REQUESTS_ENABLED),
+            requests_enabled=settings.DEMO_HOME_VISIT_REQUESTS_ENABLED,
+        ) for row in rows]
+    NO_PREFERENCE_DOCTOR_ID = "no_preference"
 
     @staticmethod
     async def _entitled_patient(user_id: str):
@@ -93,25 +103,6 @@ class HomeVisitService:
         )
 
     @staticmethod
-    async def list_admin_entitlements() -> list[AdminDemoEntitlementOut]:
-        patients = await ProfileRepository.list_patients()
-        result = []
-        for patient in patients:
-            user = await UserRepository.get_by_id(str(patient.user_id))
-            if not user:
-                continue
-            entitlement = await DemoServiceRepository.get_entitlement(str(patient.id))
-            result.append(AdminDemoEntitlementOut(
-                patient_id=str(patient.id),
-                patient_name=user.full_name,
-                patient_email=user.email,
-                patient_phone=patient.phone,
-                active=bool(entitlement and entitlement.active and settings.DEMO_HOME_VISIT_REQUESTS_ENABLED),
-                requests_enabled=settings.DEMO_HOME_VISIT_REQUESTS_ENABLED,
-            ))
-        return result
-
-    @staticmethod
     async def set_demo_entitlement(
         patient_id: str,
         admin_user_id: str,
@@ -151,8 +142,27 @@ class HomeVisitService:
             validate_booking_date(appointment_date)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        all_slot_values: set[str] = set()
+        available_slot_values: set[str] = set()
+        clinician_count = 0
+        published_count = 0
         if doctor_id == HomeVisitService.NO_PREFERENCE_DOCTOR_ID:
-            doctors = await HomeVisitService._eligible_home_visit_doctors()
+            async for context in HomeVisitQueryRepository.iter_clinician_contexts(appointment_date):
+                clinician_count += 1
+                schedule_slots, published = ClinicianScheduleService.effective_slots_from_schedule(
+                    context.schedule, appointment_date, "home_visit",
+                )
+                published_count += int(published)
+                all_slot_values.update(schedule_slots)
+                occupied = set()
+                for appointment in context.appointments:
+                    try:
+                        occupied.add(resolve_appointment_start_utc(appointment).replace(tzinfo=None))
+                    except ValueError:
+                        continue
+                for time_slot in schedule_slots:
+                    if clinic_start_to_utc_naive(appointment_date, time_slot) not in occupied:
+                        available_slot_values.add(time_slot)
         else:
             doctor = await ProfileRepository.get_doctor_by_id(doctor_id)
             if not doctor or not getattr(doctor, "accepts_home_visits", True):
@@ -160,38 +170,31 @@ class HomeVisitService:
             user = await UserRepository.get_by_id(str(doctor.user_id))
             if not user or not user.is_active:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Physiotherapist is not available for home visits")
-            doctors = [doctor]
-
-        occupied_by_doctor = {}
-        schedule_slots_by_doctor = {}
-        published_by_doctor = {}
-        for doctor in doctors:
+            clinician_count = 1
+            appointments = await AppointmentRepository.list_active_by_doctor_id(
+                doctor_id, appointment_date, appointment_date,
+            )
+            schedule_slots, published = await ClinicianScheduleService.effective_slots(
+                doctor_id, appointment_date, "home_visit",
+            )
+            published_count = int(published)
+            all_slot_values.update(schedule_slots)
             occupied = set()
-            for appointment in await AppointmentRepository.list_active_by_doctor_id(str(doctor.id)):
+            for appointment in appointments:
                 try:
                     occupied.add(resolve_appointment_start_utc(appointment).replace(tzinfo=None))
                 except ValueError:
                     continue
-            occupied_by_doctor[str(doctor.id)] = occupied
-            schedule_slots, published = await ClinicianScheduleService.effective_slots(
-                str(doctor.id), appointment_date, "home_visit"
-            )
-            schedule_slots_by_doctor[str(doctor.id)] = set(schedule_slots)
-            published_by_doctor[str(doctor.id)] = published
+            for time_slot in schedule_slots:
+                if clinic_start_to_utc_naive(appointment_date, time_slot) not in occupied:
+                    available_slot_values.add(time_slot)
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         slots = []
-        all_slot_values = sorted(
-            set().union(*schedule_slots_by_doctor.values()) if schedule_slots_by_doctor else set(),
-            key=lambda value: clinic_start_to_utc_naive(appointment_date, value),
-        )
+        all_slot_values = sorted(all_slot_values, key=lambda value: clinic_start_to_utc_naive(appointment_date, value))
         for time_slot in all_slot_values:
             starts_at = clinic_start_to_utc_naive(appointment_date, time_slot)
-            has_capacity = any(
-                time_slot in schedule_slots_by_doctor[str(doctor.id)]
-                and starts_at not in occupied_by_doctor[str(doctor.id)]
-                for doctor in doctors
-            )
+            has_capacity = time_slot in available_slot_values
             state = "past" if starts_at <= now_utc else "available" if has_capacity else "occupied"
             slots.append(AppointmentSlotOut(
                 time_slot=time_slot,
@@ -199,19 +202,23 @@ class HomeVisitService:
                 availability_state=state,
             ))
 
-        all_published = bool(doctors) and all(published_by_doctor.values())
-        any_published = any(published_by_doctor.values())
+        all_published = clinician_count > 0 and published_count == clinician_count
+        any_published = published_count > 0
         return AppointmentAvailabilityOut(
             doctor_id=doctor_id,
             appointment_date=appointment_date,
             clinic_timezone=settings.CLINIC_TIMEZONE,
-            demo_configuration=not all_published,
+            demo_configuration=not all_published and ClinicianScheduleService.demo_fallback_enabled(),
             configuration_label=(
                 "Administrator-published home-visit availability; travel time is not automatically calculated"
                 if all_published
                 else "Published schedules are used where available; unconfigured clinicians use the demonstration fallback"
-                if any_published
+                if any_published and ClinicianScheduleService.demo_fallback_enabled()
                 else "Configurable demonstration home-visit schedule; travel buffers and practitioner working hours require configuration"
+                if ClinicianScheduleService.demo_fallback_enabled()
+                else "Only published clinician home-visit schedules are available"
+                if any_published
+                else "No published clinician home-visit schedule is available"
             ),
             slot_minutes=settings.DEMO_HOME_SLOT_MINUTES,
             window_start=all_slot_values[0] if all_slot_values else "Closed",
@@ -241,55 +248,65 @@ class HomeVisitService:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="This booking form changed after submission. Refresh availability before confirming again.",
                 )
+            await HomeVisitService._persist_requested_address(patient, schema)
             return await AppointmentService._format_appointment(existing)
 
         no_preference = not schema.preferred_doctor_id
-        if no_preference:
-            candidate_doctors = await HomeVisitService._eligible_home_visit_doctors()
-            if not candidate_doctors:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="No home-visit clinician is available for this time. Choose another slot.",
-                )
-        else:
+        doctor = None
+        if not no_preference:
             doctor = await ProfileRepository.get_doctor_by_id(schema.preferred_doctor_id)
             if not doctor or not getattr(doctor, "accepts_home_visits", True):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Physiotherapist is not available for home visits")
             user = await UserRepository.get_by_id(str(doctor.user_id))
             if not user or not user.is_active:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Physiotherapist is not available for home visits")
-            candidate_doctors = [doctor]
 
-        eligible_candidates = []
-        schedule_error = None
-        starts_at = None
-        for doctor in candidate_doctors:
-            try:
-                candidate_start, _published = await ClinicianScheduleService.validate_effective_slot(
-                    str(doctor.id), schema.appointment_date, schema.time_slot, "home_visit"
+        saw_clinician = False
+        saw_scheduled_clinician = False
+
+        async def candidates():
+            nonlocal saw_clinician, saw_scheduled_clinician
+            if not no_preference:
+                starts_at, _published = await ClinicianScheduleService.validate_effective_slot(
+                    str(doctor.id), schema.appointment_date, schema.time_slot, "home_visit",
                 )
-                starts_at = candidate_start
-                eligible_candidates.append(doctor)
-            except HTTPException as exc:
-                schedule_error = exc
-        if not eligible_candidates:
-            if not no_preference and schedule_error:
-                raise schedule_error
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="No home-visit clinician is scheduled for this time. Choose another slot.",
-            )
-        candidate_doctors = eligible_candidates
+                saw_clinician = True
+                saw_scheduled_clinician = True
+                yield doctor.id, starts_at
+                return
+            async for context in HomeVisitQueryRepository.iter_clinician_contexts(schema.appointment_date):
+                saw_clinician = True
+                slots, published = ClinicianScheduleService.effective_slots_from_schedule(
+                    context.schedule, schema.appointment_date, "home_visit",
+                )
+                try:
+                    starts_at, _published = ClinicianScheduleService.validate_effective_slot_values(
+                        schema.appointment_date, schema.time_slot, slots, published,
+                    )
+                except HTTPException:
+                    continue
+                occupied = False
+                for appointment in context.appointments:
+                    try:
+                        occupied = resolve_appointment_start_utc(appointment).replace(tzinfo=None) == starts_at
+                    except ValueError:
+                        continue
+                    if occupied:
+                        break
+                if occupied:
+                    continue
+                saw_scheduled_clinician = True
+                yield context.id, starts_at
 
         saved = None
-        for doctor in candidate_doctors:
+        async for candidate_doctor_id, starts_at in candidates():
             appointment = Appointment(
                 patient_id=patient.id,
-                doctor_id=doctor.id,
+                doctor_id=candidate_doctor_id,
                 doctor_assignment_pending=no_preference,
                 appointment_date=datetime.combine(schema.appointment_date, datetime.min.time()),
                 starts_at=starts_at,
-                slot_claim=active_slot_claim(str(doctor.id), starts_at),
+                slot_claim=active_slot_claim(str(candidate_doctor_id), starts_at),
                 submission_claim=submission_claim,
                 submission_fingerprint=submission_fingerprint,
                 clinic_timezone=settings.CLINIC_TIMEZONE,
@@ -316,18 +333,27 @@ class HomeVisitService:
                             status_code=status.HTTP_409_CONFLICT,
                             detail="This booking form changed after submission. Refresh availability before confirming again.",
                         ) from exc
+                    await HomeVisitService._persist_requested_address(patient, schema)
                     return await AppointmentService._format_appointment(repeated)
                 continue
 
         if saved is None:
+            if no_preference and not saw_clinician:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No home-visit clinician is available for this time. Choose another slot.",
+                )
+            if no_preference and not saw_scheduled_clinician:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No home-visit clinician is scheduled for this time. Choose another slot.",
+                )
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="That slot was just taken. Refresh availability and choose another time.",
             )
 
-        if schema.save_address:
-            patient.saved_home_address = schema.home_address
-            await ProfileRepository.save_patient(patient)
+        await HomeVisitService._persist_requested_address(patient, schema)
         return await AppointmentService._format_appointment(saved)
 
     @staticmethod
@@ -400,29 +426,84 @@ class HomeVisitService:
         return await AppointmentService._format_appointment(updated)
 
     @staticmethod
-    async def list_patient_requests(user_id: str) -> list[HomeVisitRequestOut]:
+    async def list_patient_requests(
+        user_id: str, page: PageWindow | None = None, recent_updates: bool = False,
+    ) -> list[HomeVisitRequestOut]:
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
         if not patient:
             return []
-        requests = await DemoServiceRepository.list_by_patient(str(patient.id))
+        requests = (
+            await DemoServiceRepository.list_page_by_patient(
+                str(patient.id), page, recent_updates=True,
+            ) if recent_updates else await DemoServiceRepository.list_page_by_patient(str(patient.id), page)
+            if page is not None else await DemoServiceRepository.list_by_patient(str(patient.id))
+        )
+        if page is not None:
+            return await HomeVisitService._format_full_page(requests)
         return [await HomeVisitService._format_full(request) for request in requests]
 
     @staticmethod
-    async def list_admin_requests() -> list[HomeVisitRequestOut]:
-        requests = await DemoServiceRepository.list_all()
+    async def list_admin_requests(page: PageWindow | None = None) -> list[HomeVisitRequestOut]:
+        requests = (
+            await DemoServiceRepository.list_page_all(page)
+            if page is not None else await DemoServiceRepository.list_all()
+        )
+        if page is not None:
+            return await HomeVisitService._format_full_page(requests)
         return [await HomeVisitService._format_full(request) for request in requests]
 
     @staticmethod
-    async def list_reception_requests() -> list[ReceptionHomeVisitRequestOut]:
-        requests = await DemoServiceRepository.list_reception_coordination()
+    async def list_reception_requests(
+        page: PageWindow | None = None,
+    ) -> list[ReceptionHomeVisitRequestOut]:
+        requests = (
+            await DemoServiceRepository.list_page_reception_coordination(page)
+            if page is not None else await DemoServiceRepository.list_reception_coordination()
+        )
+        if page is not None and requests:
+            patients, doctors, users = await AppointmentService._page_profile_maps(
+                requests,
+                "preferred_doctor_id",
+                include_patient_phone=True,
+                include_patient_email=True,
+            )
+            result = []
+            for request in requests:
+                patient = patients.get(request.patient_id)
+                doctor = doctors.get(request.preferred_doctor_id)
+                patient_user = users.get(patient.user_id) if patient else None
+                doctor_user = users.get(doctor.user_id) if doctor else None
+                if not all((patient, doctor, patient_user, doctor_user)):
+                    raise HTTPException(status_code=404, detail="Related patient or physiotherapist not found")
+                result.append(await HomeVisitService._format_reception(
+                    request, related=(patient, doctor, patient_user, doctor_user),
+                ))
+            return result
         return [await HomeVisitService._format_reception(request) for request in requests]
 
     @staticmethod
-    async def list_doctor_requests(user_id: str) -> list[DoctorHomeVisitRequestOut]:
+    async def list_doctor_requests(
+        user_id: str, page: PageWindow | None = None,
+    ) -> list[DoctorHomeVisitRequestOut]:
         doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
         if not doctor:
             return []
-        requests = await DemoServiceRepository.list_doctor_coordination(str(doctor.id))
+        requests = (
+            await DemoServiceRepository.list_page_doctor_coordination(str(doctor.id), page)
+            if page is not None else await DemoServiceRepository.list_doctor_coordination(str(doctor.id))
+        )
+        if page is not None:
+            patients, users = await HomeVisitService._page_patient_maps(requests)
+            result = []
+            for request in requests:
+                patient = patients.get(request.patient_id)
+                patient_user = users.get(patient.user_id) if patient else None
+                if not patient or not patient_user:
+                    raise HTTPException(status_code=404, detail="Related patient account not found")
+                result.append(await HomeVisitService._format_doctor(
+                    request, patient=patient, patient_user=patient_user,
+                ))
+            return result
         return [await HomeVisitService._format_doctor(request) for request in requests]
 
     @staticmethod
@@ -499,8 +580,56 @@ class HomeVisitService:
         return patient, doctor, patient_user, doctor_user
 
     @staticmethod
-    async def _format_full(request: HomeVisitRequest) -> HomeVisitRequestOut:
-        patient, doctor, patient_user, doctor_user = await HomeVisitService._related(request)
+    async def _page_patient_maps(requests: list):
+        """Fetch only doctor-visible patient identity fields for one authorized page."""
+        if not requests:
+            return {}, {}
+        patient_ids = list({request.patient_id for request in requests})
+        patients = await Patient.get_pymongo_collection().find(
+            {"_id": {"$in": patient_ids}}, {"user_id": 1, "phone": 1},
+        ).to_list(length=len(patient_ids))
+        user_ids = list({row["user_id"] for row in patients})
+        users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": user_ids}}, {"full_name": 1},
+        ).to_list(length=len(user_ids)) if user_ids else []
+        return (
+            {row["_id"]: SimpleNamespace(
+                id=row["_id"], user_id=row["user_id"], phone=row.get("phone"),
+            ) for row in patients},
+            {row["_id"]: SimpleNamespace(id=row["_id"], full_name=row["full_name"])
+             for row in users},
+        )
+
+    @staticmethod
+    async def _format_full_page(requests: list) -> list[HomeVisitRequestOut]:
+        if not requests:
+            return []
+        patients, doctors, users = await AppointmentService._page_profile_maps(
+            requests,
+            "preferred_doctor_id",
+            include_patient_phone=True,
+            include_patient_email=True,
+        )
+        result = []
+        for request in requests:
+            patient = patients.get(request.patient_id)
+            doctor = doctors.get(request.preferred_doctor_id)
+            patient_user = users.get(patient.user_id) if patient else None
+            doctor_user = users.get(doctor.user_id) if doctor else None
+            if not all((patient, doctor, patient_user, doctor_user)):
+                raise HTTPException(status_code=404, detail="Related patient or physiotherapist not found")
+            result.append(await HomeVisitService._format_full(
+                request, related=(patient, doctor, patient_user, doctor_user),
+            ))
+        return result
+
+    @staticmethod
+    async def _format_full(
+        request: HomeVisitRequest, *, related=None,
+    ) -> HomeVisitRequestOut:
+        patient, doctor, patient_user, doctor_user = (
+            related if related is not None else await HomeVisitService._related(request)
+        )
         return HomeVisitRequestOut(
             id=str(request.id),
             patient_id=str(patient.id),
@@ -523,8 +652,12 @@ class HomeVisitService:
         )
 
     @staticmethod
-    async def _format_reception(request: HomeVisitRequest) -> ReceptionHomeVisitRequestOut:
-        patient, doctor, patient_user, doctor_user = await HomeVisitService._related(request)
+    async def _format_reception(
+        request: HomeVisitRequest, *, related=None,
+    ) -> ReceptionHomeVisitRequestOut:
+        patient, doctor, patient_user, doctor_user = (
+            related if related is not None else await HomeVisitService._related(request)
+        )
         return ReceptionHomeVisitRequestOut(
             id=str(request.id),
             patient_id=str(patient.id),
@@ -541,8 +674,11 @@ class HomeVisitService:
         )
 
     @staticmethod
-    async def _format_doctor(request: HomeVisitRequest) -> DoctorHomeVisitRequestOut:
-        patient, _doctor, patient_user, _doctor_user = await HomeVisitService._related(request)
+    async def _format_doctor(
+        request: HomeVisitRequest, *, patient=None, patient_user=None,
+    ) -> DoctorHomeVisitRequestOut:
+        if patient is None or patient_user is None:
+            patient, _doctor, patient_user, _doctor_user = await HomeVisitService._related(request)
         return DoctorHomeVisitRequestOut(
             id=str(request.id),
             patient_id=str(patient.id),

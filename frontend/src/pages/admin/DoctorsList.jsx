@@ -1,28 +1,30 @@
-import React, { useState } from 'react';
+import React, { useDeferredValue, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import Skeleton from '../../components/common/Skeleton';
 import ErrorState from '../../components/common/ErrorState';
 import EmptyState from '../../components/common/EmptyState';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 
 export default function DoctorsList() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [editingDoctor, setEditingDoctor] = useState(null);
   const [profileDraft, setProfileDraft] = useState({});
-  const { 
-    data: doctors, 
-    isLoading, 
-    error, 
-    refetch 
-  } = useQuery({
-    queryKey: ['doctors'],
-    queryFn: async () => {
-      const response = await api.get('/users/doctors');
-      return response.data;
-    }
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const deferredSearch = useDeferredValue(search);
+  const searchSettled = deferredSearch === search;
+  const queryPath = `/users/doctors?search=${encodeURIComponent(deferredSearch.trim())}`;
+  const directory = useQuery({
+    queryKey: ['doctors', 'directory', deferredSearch, page],
+    queryFn: () => fetchClinicalPage(queryPath, page),
+    gcTime: 0,
   });
+  const doctors = searchSettled ? directory.data?.data || [] : [];
+  const isLoading = directory.isPending || !searchSettled;
 
   const updateProfile = useMutation({
     mutationFn: async ({ doctorId, values }) => (await api.patch(`/users/doctors/${doctorId}`, values)).data,
@@ -69,8 +71,8 @@ export default function DoctorsList() {
     });
   };
 
-  if (error) {
-    return <ErrorState message="Could not load medical staff records." onRetry={() => refetch()} />;
+  if (directory.isError && searchSettled) {
+    return <ErrorState message="Could not load medical staff records." onRetry={() => directory.refetch()} />;
   }
 
   const getInitials = (name) => name
@@ -93,6 +95,21 @@ export default function DoctorsList() {
         <span className="material-symbols-outlined" aria-hidden="true">verified_user</span>
         <span>Publish only clinic-verified qualifications, experience, photos, focus areas, and personal professional links. Empty fields stay absent from the public profile.</span>
       </div>
+
+      <section className="portal-section-card p-5" aria-labelledby="clinician-directory-search-heading">
+        <label id="clinician-directory-search-heading" htmlFor="clinician-directory-search" className="font-semibold text-on-surface">
+          Search clinician directory
+        </label>
+        <input
+          id="clinician-directory-search"
+          type="search"
+          value={search}
+          onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+          className="mt-2 min-h-11 w-full rounded-xl border border-outline-variant bg-surface px-3"
+          placeholder="Search by name, email, specialization, qualification, or focus area"
+        />
+        <p className="mt-2 text-sm text-on-surface-variant">Results are searched and sorted by the server, one bounded page at a time.</p>
+      </section>
 
       {editingDoctor && (
         <form className="portal-section-card portal-profile-editor p-5 grid gap-5" onSubmit={submitProfile} aria-busy={updateProfile.isPending}>
@@ -127,7 +144,7 @@ export default function DoctorsList() {
             <h2 id="clinical-team-heading" className="font-headline-md text-headline-md">Clinical team</h2>
           </div>
           <span className="portal-count-pill">
-            {doctors ? doctors.length : 0} practitioners
+            {doctors.length} practitioners on this page
           </span>
         </div>
 
@@ -135,11 +152,13 @@ export default function DoctorsList() {
           <div className="p-6 space-y-4">
             <Skeleton variant="row" count={2} />
           </div>
-        ) : !doctors || doctors.length === 0 ? (
+        ) : doctors.length === 0 ? (
           <div className="p-6">
             <EmptyState 
-              title="No doctors added" 
-              message="No medical specialists have been created in the database yet."
+              title={search.trim() ? 'No matching clinicians' : 'No doctors added'}
+              message={search.trim()
+                ? 'No medical specialists match this search on this page.'
+                : 'No medical specialists have been created in the database yet.'}
               icon="stethoscope"
             />
           </div>
@@ -217,6 +236,14 @@ export default function DoctorsList() {
           </div>
           </>
         )}
+        {!isLoading && <ClinicalPageNav
+          label="Clinician directory"
+          page={page}
+          onPageChange={setPage}
+          isLoading={directory.isFetching || !searchSettled}
+          itemCount={doctors.length}
+          hasNext={directory.data?.hasNext}
+        />}
       </section>
     </div>
   );

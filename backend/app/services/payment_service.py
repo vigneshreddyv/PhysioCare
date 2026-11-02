@@ -11,10 +11,18 @@ from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import settings
+from app.core.request_limits import (
+    MAX_RAZORPAY_ENTITY_ID_CHARS,
+    MAX_RAZORPAY_EVENT_ID_CHARS,
+    MAX_RAZORPAY_SIGNATURE_CHARS,
+    MAX_RAZORPAY_WEBHOOK_BYTES,
+)
 from app.models.appointment import Appointment
 from app.models.payment_attempt import PaymentAttempt, RazorpayWebhookEvent
 from app.repositories.appointment_repository import AppointmentRepository
+from app.repositories.payment_query_repository import PaymentQueryRepository
 from app.repositories.profile_repository import ProfileRepository
+from app.core.pagination import DEFAULT_PAGE_SIZE, PageWindow
 
 
 logger = logging.getLogger(__name__)
@@ -79,7 +87,9 @@ class PaymentService:
         query = {"_id": appointment_id}
         if only_if_unpaid:
             query["billing_status"] = {"$ne": "paid"}
-        return await Appointment.get_pymongo_collection().update_one(query, {"$set": fields})
+        return await Appointment.get_pymongo_collection().update_one(
+            query, {"$set": fields, "$inc": {"revision": 1}}
+        )
 
     @staticmethod
     async def _attach_order_to_scheduled_appointment(appointment: Appointment, order_id: str) -> bool:
@@ -98,7 +108,8 @@ class PaymentService:
                     "billing_currency": PaymentService.CURRENCY,
                     "payment_status": "pending",
                     "payment_order_id": order_id,
-                }
+                },
+                "$inc": {"revision": 1},
             },
         )
         return bool(result.matched_count)
@@ -313,7 +324,7 @@ class PaymentService:
                     },
                 ],
             },
-            {"$set": payment_fields},
+            {"$set": payment_fields, "$inc": {"revision": 1}},
         )
         if result.matched_count:
             return "success"
@@ -344,7 +355,8 @@ class PaymentService:
                     "payment_order_id": attempt.provider_order_id,
                     "payment_id": payment_id,
                     "billing_currency": attempt.currency,
-                }
+                },
+                "$inc": {"revision": 1},
             },
         )
         appointment = await AppointmentRepository.get_by_id(str(appointment_id))
@@ -600,29 +612,39 @@ class PaymentService:
         }
 
     @staticmethod
-    async def get_patient_payment_history(user_id: str) -> list[dict]:
+    async def get_patient_payment_history(
+        user_id: str,
+        page: PageWindow = PageWindow(1, DEFAULT_PAGE_SIZE),
+        *,
+        payment_status: str | None = None,
+        start_date=None,
+        end_date=None,
+    ) -> list[dict]:
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
         if not patient:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient profile not found")
 
-        attempts = await PaymentAttempt.find(
-            {"patient_id": patient.id}
-        ).sort("-created_at").to_list()
+        rows = await PaymentQueryRepository.list_patient_history(
+            str(patient.id), page,
+            payment_status=payment_status,
+            start_date=start_date,
+            end_date=end_date,
+        )
         history = []
-        for attempt in attempts:
-            appointment = await Appointment.get(attempt.appointment_id)
+        for row in rows:
+            appointment = row.get("appointment") or {}
             history.append({
-                "id": str(attempt.id),
-                "appointment_id": str(attempt.appointment_id),
-                "amount": attempt.amount_paise / 100,
-                "currency": attempt.currency,
-                "status": attempt.status,
-                "reconciliation_status": attempt.reconciliation_status,
-                "billing_status": appointment.billing_status if appointment else "unknown",
-                "payment_status": appointment.payment_status if appointment else "unknown",
-                "appointment_date": appointment.appointment_date if appointment else None,
-                "time_slot": appointment.time_slot if appointment else None,
-                "service_mode": appointment.service_mode if appointment else None,
+                "id": str(row["_id"]),
+                "appointment_id": str(row["appointment_id"]),
+                "amount": row["amount_paise"] / 100,
+                "currency": row.get("currency", PaymentService.CURRENCY),
+                "status": row["status"],
+                "reconciliation_status": row.get("reconciliation_status", "pending"),
+                "billing_status": appointment.get("billing_status", "unknown"),
+                "payment_status": appointment.get("payment_status", "unknown"),
+                "appointment_date": appointment.get("appointment_date"),
+                "time_slot": appointment.get("time_slot"),
+                "service_mode": appointment.get("service_mode"),
             })
         return history
 
@@ -656,9 +678,16 @@ class PaymentService:
 
     @staticmethod
     async def handle_webhook(raw_body: bytes, signature: str | None, event_id: str | None) -> dict:
-        PaymentService._require_test_configuration()
         if not signature or not event_id:
             raise HTTPException(status_code=400, detail="Webhook signature and event ID are required")
+        if len(raw_body) > MAX_RAZORPAY_WEBHOOK_BYTES:
+            raise HTTPException(status_code=413, detail="Request body is too large")
+        if (
+            len(signature) > MAX_RAZORPAY_SIGNATURE_CHARS
+            or len(event_id) > MAX_RAZORPAY_EVENT_ID_CHARS
+        ):
+            raise HTTPException(status_code=400, detail="Webhook headers are invalid")
+        PaymentService._require_test_configuration()
         try:
             raw_body_text = raw_body.decode("utf-8")
             await asyncio.to_thread(
@@ -683,6 +712,15 @@ class PaymentService:
         entity = entity if isinstance(entity, dict) else {}
         order_id = entity.get("order_id")
         payment_id = entity.get("id")
+        if any(
+            value is not None and (
+                not isinstance(value, str)
+                or not value
+                or len(value) > MAX_RAZORPAY_ENTITY_ID_CHARS
+            )
+            for value in (order_id, payment_id)
+        ):
+            raise HTTPException(status_code=400, detail="Webhook body is invalid")
         try:
             webhook_event = await RazorpayWebhookEvent.find_one(
                 {"body_digest": body_digest}

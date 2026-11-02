@@ -28,7 +28,8 @@ test('notifications page uses real backend endpoints and provides unread managem
 
   assert.match(appSource, /const Notifications = lazy\(\(\) => import\('\.\/pages\/common\/Notifications'\)\)/);
   assert.match(appSource, /path="\/notifications"/);
-  assert.match(commonNotifSource, /api\.get\('\/notifications'\)/);
+  assert.match(commonNotifSource, /fetchClinicalPage\('\/notifications', page\)/);
+  assert.match(commonNotifSource, /<ClinicalPageNav label="Notifications"/);
   assert.match(commonNotifSource, /api\.get\('\/notifications\/unread-count'\)/);
   assert.match(commonNotifSource, /api\.patch\(`\/notifications\/\$\{notificationId\}\/read`\)/);
   assert.match(commonNotifSource, /api\.patch\('\/notifications\/read-all'\)/);
@@ -66,7 +67,9 @@ test('admin patient edit and history routes use authenticated server contracts',
   assert.match(editSource, /api\.patch\(`\/users\/patients\/\$\{id\}`/);
   assert.match(editSource, /registered email and account role cannot be changed/i);
   assert.match(editSource, /Previous field values are not copied into the audit trail/);
-  assert.match(historySource, /api\.get\(`\/users\/patients\/\$\{id\}\/history`\)/);
+  assert.match(historySource, /api\.get\(`\/users\/patients\/\$\{id\}\/history`/);
+  assert.match(historySource, /start_date: startDate \|\| undefined, end_date: endDate \|\| undefined/);
+  assert.match(historySource, /<ClinicalPageNav label="Patient history"/);
   assert.match(historySource, /Profile edit audit/);
   assert.match(historySource, /api\.get\(`\/lab-requests\/\$\{report\.request_id\}\/report-file`/);
   assert.match(historySource, /navigate\('\/admin\/patients'\)/);
@@ -230,7 +233,9 @@ test('patient history cancellation dialog keeps readable contrast and accessible
 test('doctor patient directory renders assigned minimum fields without admin actions', async () => {
   const patientsSource = await source('src/pages/admin/PatientsList.jsx');
 
-  assert.match(patientsSource, /queryKey: \['patients', user\?\.role\]/);
+  assert.match(patientsSource, /queryKey: \['patients', 'directory', user\?\.id, user\?\.role, page\]/);
+  assert.match(patientsSource, /fetchClinicalPage\(directoryPath, page\)/);
+  assert.match(patientsSource, /Patient directory pages/);
   assert.match(patientsSource, /Review only the patients linked to appointments assigned to you/);
   assert.match(patientsSource, /Patients will appear here only after an appointment is assigned to you/);
   assert.match(patientsSource, /\(isAdmin \|\| isReceptionist\) && <th className="p-4">Email<\/th>/);
@@ -258,8 +263,8 @@ test('care management is routed for admin and doctor patient records only', asyn
   assert.doesNotMatch(sidebarSource.match(/patient: \[[\s\S]*?\n    \]/)?.[0] || '', /care management/i);
   assert.doesNotMatch(sidebarSource.match(/laboratorian: \[[\s\S]*?\n    \]/)?.[0] || '', /care management/i);
   assert.match(patientsSource, /navigate\(`\/(?:admin|doctor)\/patients\/\$\{patient\.id\}\/(?:care-plan|exercises)`\)/);
-  assert.match(carePlanSource, /api\.get\(`\/care-plans\/patient\/\$\{patientId\}`\)/);
-  assert.match(exerciseSource, /api\.get\(`\/exercise-assignments\?patient_id=\$\{patientId\}`\)/);
+  assert.match(carePlanSource, /fetchClinicalPage\(`\/care-plans\/patient\/\$\{patientId\}`, plansPage\)/);
+  assert.match(exerciseSource, /fetchClinicalPage\(`\/exercise-assignments\?patient_id=\$\{patientId\}&include_labels=true`, assignmentsPage\)/);
   assert.match(
     appSource,
     /<RoleProtectedRoute allowedRoles=\{\['doctor'\]\}>[\s\S]*?path="patients\/:patientId\/care-plan" element={<CarePlanManagement \/>}/,
@@ -288,13 +293,13 @@ test('general clinical report authoring is role-scoped and uses the report contr
   assert.match(sidebarSource, /doctor:[\s\S]*?\{ path: '\/doctor\/reports\/new', label: 'Clinical reports', icon: 'description' \}/);
   assert.doesNotMatch(sidebarSource.match(/patient: \[[\s\S]*?\n    \]/)?.[0] || '', /clinical reports/i);
   assert.doesNotMatch(sidebarSource.match(/laboratorian: \[[\s\S]*?\n    \]/)?.[0] || '', /clinical reports/i);
-  assert.match(authoringSource, /api\.get\('\/users\/patients'\)/);
+  assert.match(authoringSource, /<ClinicalEntityPicker path="\/users\/patients" label="Patient"/);
   assert.match(authoringSource, /body\.append\('report_data_str', JSON\.stringify\(payload\)\)/);
   assert.match(authoringSource, /api\.post\('\/reports', body/);
   assert.match(authoringSource, /Symptoms/);
   assert.match(authoringSource, /Findings/);
   assert.match(authoringSource, /Recommendations/);
-  assert.match(patientSource, /api\.get\('\/reports'\)/);
+  assert.match(patientSource, /fetchClinicalPage\(reportPath, page\)/);
   assert.match(patientSource, /api\.get\(`\/reports\/\$\{report\.id\}\/download`/);
 });
 
@@ -308,7 +313,7 @@ test('doctor assigned-patient history is route-scoped and renders published repo
 
   assert.match(appSource, /<Route path="patients\/:patientId" element={<DoctorPatientHistory \/>} \/>/);
   assert.match(patientsSource, /navigate\(`\/doctor\/patients\/\$\{patient\.id\}`\)/);
-  assert.match(historySource, /api\.get\(`\/users\/doctor\/patients\/\$\{patientId\}\/history`\)/);
+  assert.match(historySource, /api\.get\(`\/users\/doctor\/patients\/\$\{patientId\}\/history`/);
   assert.match(historySource, /Published report history/);
   assert.match(historySource, /Reports shown here were completed through PhysioCare and published by an administrator/);
   assert.match(historySource, /External historical documents are not available in this record/);
@@ -328,7 +333,8 @@ test('public doctor directory uses privacy-safe staff profiles and truthful stat
     source('src/pages/patient/HomeVisitRequests.jsx'),
   ]);
 
-  assert.match(homeSource, /api\.get\('\/users\/public\/doctors'\)/);
+  assert.match(homeSource, /fetchClinicalPage\(\s*`\/users\/public\/doctors\?search=/);
+  assert.match(homeSource, /<ClinicalPageNav\s+label="Public clinicians"/);
   assert.match(homeSource, /No public clinician profiles are available yet/);
   assert.match(homeSource, /Clinician profiles are temporarily unavailable/);
   assert.match(homeSource, /doctor\.specialization/);
@@ -343,8 +349,10 @@ test('public doctor directory uses privacy-safe staff profiles and truthful stat
   assert.match(doctorsSource, /api\.patch\(`\/users\/doctors\/\$\{doctorId\}`/);
   assert.match(doctorsSource, /Publish only clinic-verified qualifications/);
   assert.match(doctorsSource, /Personal LinkedIn URL/);
-  assert.match(bookingSource, /api\.get\('\/users\/public\/doctors'\)/);
-  assert.match(homeVisitsSource, /api\.get\('\/users\/public\/doctors'\)/);
+  assert.match(bookingSource, /fetchClinicalPage\(\s*`\/users\/public\/doctors\?search=/);
+  assert.match(bookingSource, /<ClinicalPageNav label="Booking clinicians"/);
+  assert.match(homeVisitsSource, /fetchClinicalPage\(`\/users\/public\/doctors\?home_visits_only=true&search=/);
+  assert.match(homeVisitsSource, /<ClinicalPageNav label="Home-visit clinicians"/);
 });
 
 
@@ -476,15 +484,19 @@ test('clinician discovery is searchable without inventing profile data', async (
     source('src/pages/patient/BookAppointment.jsx'),
   ]);
 
-  for (const pageSource of [homeSource, bookingSource]) {
-    assert.match(pageSource, /doctor\.full_name/);
-    assert.match(pageSource, /doctor\.specialization/);
-    assert.match(pageSource, /doctor\.qualifications/);
-    assert.match(pageSource, /doctor\.specialties/);
-    assert.match(pageSource, /Search by name, specialty, or focus area/);
-    assert.match(pageSource, /aria-live="polite"/);
-    assert.match(pageSource, /Clear search/);
-  }
+  assert.match(homeSource, /doctor\.full_name/);
+  assert.match(homeSource, /doctor\.specialization/);
+  assert.match(homeSource, /doctor\.qualifications/);
+  assert.match(homeSource, /doctor\.specialties/);
+  assert.match(homeSource, /Search by name, specialty, or focus area/);
+  assert.match(homeSource, /aria-live="polite"/);
+  assert.match(homeSource, /Clear search/);
+
+  assert.match(bookingSource, /fetchClinicalPage\(\s*`\/users\/public\/doctors\?search=/);
+  assert.match(bookingSource, /placeholder="Search by clinician name"/);
+  assert.match(bookingSource, /<DoctorCard/);
+  assert.match(bookingSource, /aria-live="polite"/);
+  assert.match(bookingSource, /Clear search/);
 });
 
 
@@ -554,7 +566,7 @@ test('reception booking and schedule omit clinical and billing fields', async ()
   assert.match(bookingSource, /isReceptionist \? '\/users\/reception\/doctors' : '\/users\/doctors'/);
   assert.match(bookingSource, /isReceptionist \? '\/users\/reception\/patients' : '\/users\/patients'/);
   assert.match(bookingSource, /Reception does not collect or display clinical reasons/);
-  assert.match(dashboardSource, /api\.get\('\/appointments\/reception'\)/);
+  assert.match(dashboardSource, /fetchClinicalPage\(schedulePath, schedulePage\)/);
   assert.match(dashboardSource, /api\.post\(`\/appointments\/reception\/\$\{appointmentId\}\/cancel`\)/);
   assert.doesNotMatch(dashboardSource, /appointment\.reason|billing_amount|billing_status|subscription_status|date_of_birth/);
   assert.match(patientsSource, /Clinical history, reasons, birth dates, subscriptions, and billing details are not available in reception/);
@@ -580,6 +592,8 @@ test('home visits use explicit slot confirmation while legacy requests stay sepa
   assert.match(patientSource, /api\.get\('\/demo-services\/me\/entitlement'\)/);
   assert.match(patientSource, /api\.get\('\/home-visit-bookings\/availability'/);
   assert.match(patientSource, /api\.post\('\/home-visit-bookings'/);
+  assert.match(patientSource, /fetchClinicalPage\(`\/users\/public\/doctors\?home_visits_only=true&search=/);
+  assert.match(patientSource, /<ClinicalPageNav label="Home-visit clinicians"/);
   assert.match(patientSource, /Confirm home visit/);
   assert.match(patientSource, /Home-visit appointments/);
   assert.match(patientSource, /booking\.status\.replaceAll/);
@@ -605,9 +619,10 @@ test('home visits use explicit slot confirmation while legacy requests stay sepa
   assert.match(adminSource, /api\.patch\(`\/home-visit-requests\/admin\/\$\{requestId\}`/);
   assert.match(adminSource, /api\.patch\(`\/home-visit-bookings\/admin\/\$\{appointmentId\}\/doctor`/);
   assert.match(adminSource, /Payments are unconfigured/);
-  assert.match(doctorSource, /api\.get\('\/home-visit-requests\/doctor'\)/);
+  assert.match(doctorSource, /fetchClinicalPage\('\/home-visit-requests\/doctor', page\)/);
+  assert.match(doctorSource, /<ClinicalPageNav label="Assigned home visits"/);
   assert.match(doctorSource, /request\.reason/);
-  assert.match(receptionSource, /api\.get\('\/home-visit-requests\/reception'\)/);
+  assert.match(receptionSource, /fetchClinicalPage\('\/home-visit-requests\/reception', requestPage\)/);
   assert.doesNotMatch(receptionSource, /request\.reason/);
 });
 
@@ -806,9 +821,11 @@ test('phone verification uses separate provider-gated channel and code screens',
 test('patient appointment timeline separates lifecycle states and limits self-service cancellation', async () => {
   const historySource = await source('src/pages/patient/PatientHistory.jsx');
 
-  assert.match(historySource, /value: 'upcoming'.*\['scheduled', 'in_progress'\]/s);
-  assert.match(historySource, /value: 'completed'.*\['completed'\]/s);
-  assert.match(historySource, /value: 'cancelled'.*\['cancelled'\]/s);
+  for (const group of ['upcoming', 'completed', 'cancelled']) {
+    assert.match(historySource, new RegExp(`value: '${group}'`));
+  }
+  assert.match(historySource, /\/appointments\/me\/history\?status_group=\$\{filter\}/);
+  assert.match(historySource, /fetchClinicalPage/);
   assert.match(historySource, /service_mode === 'home_visit'/);
   assert.match(historySource, /doctor_assignment_pending/);
   assert.match(historySource, /Doctor assignment pending/);
@@ -837,6 +854,8 @@ test('laboratory workflow keeps assignment, finalized upload, admin publication,
   assert.match(roleRouteSource, /laboratorian: '\/laboratory\/dashboard'/);
   assert.match(adminSource, /AdminLabRequestsPanel/);
   assert.match(adminLabSource, /\/users\/laboratorians/);
+  assert.match(adminLabSource, /fetchClinicalPage\(`\/users\/laboratorians\?search=/);
+  assert.match(adminLabSource, /<ClinicalPageNav label="Laboratory staff"/);
   assert.match(adminLabSource, /\/lab-requests\/admin\/\$\{requestId\}\/assignment/);
   assert.match(adminLabSource, /\/lab-requests\/admin\/\$\{requestId\}\/publish-report/);
   assert.match(adminLabSource, /Publish report to patient/);

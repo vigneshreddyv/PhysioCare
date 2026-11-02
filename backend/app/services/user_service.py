@@ -3,6 +3,7 @@ from typing import List, Optional
 from beanie import PydanticObjectId
 
 from app.core.time import utc_now
+from app.core.pagination import DEFAULT_PAGE_SIZE, PageWindow
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.appointment_repository import AppointmentRepository
@@ -24,6 +25,68 @@ from fastapi import HTTPException, status
 class UserService:
 
     @staticmethod
+    async def search_patients(search: str, page: PageWindow, *, doctor_user_id: str | None = None,
+                              reception: bool = False):
+        doctor_id = None
+        if doctor_user_id:
+            doctor = await ProfileRepository.get_doctor_by_user_id(doctor_user_id)
+            if not doctor:
+                return []
+            doctor_id = str(doctor.id)
+        pairs = await ProfileRepository.search_patients(
+            search,
+            page,
+            doctor_id=doctor_id,
+            active_only=reception,
+            view="reception" if reception else "doctor" if doctor_user_id else "admin",
+        )
+        if reception:
+            return [ReceptionPatientOut(id=str(patient.id), full_name=user.full_name,
+                                        email=user.email, phone=patient.phone)
+                    for patient, user in pairs]
+        if doctor_user_id:
+            return [DoctorPatientOut(id=str(patient.id), full_name=user.full_name,
+                                     phone=patient.phone, date_of_birth=patient.date_of_birth,
+                                     gender=getattr(patient, "gender", None))
+                    for patient, user in pairs]
+        return [UserService._patient_out(patient, user) for patient, user in pairs]
+
+    @staticmethod
+    async def search_doctors(search: str, page: PageWindow, *, reception: bool = False,
+                             home_visits_only: bool = False):
+        pairs = await ProfileRepository.search_doctors(
+            search, page, active_only=reception, home_visits_only=home_visits_only,
+        )
+        if reception:
+            return [PublicDoctorOut(id=str(doctor.id), full_name=user.full_name,
+                                    **UserService._doctor_profile_fields(doctor))
+                    for doctor, user in pairs]
+        return [DoctorOut(id=str(doctor.id), full_name=user.full_name, email=user.email,
+                          is_active_today=doctor.is_active_today,
+                          **UserService._doctor_profile_fields(doctor))
+                for doctor, user in pairs]
+
+    @staticmethod
+    async def search_public_doctors(
+        search: str, page: PageWindow, *, home_visits_only: bool = False,
+    ) -> list[PublicDoctorOut]:
+        pairs = await ProfileRepository.search_doctors(
+            search,
+            page,
+            active_only=True,
+            home_visits_only=home_visits_only,
+            include_email_in_search=False,
+        )
+        return [
+            PublicDoctorOut(
+                id=str(doctor.id),
+                full_name=user.full_name,
+                **UserService._doctor_profile_fields(doctor),
+            )
+            for doctor, user in pairs
+        ]
+
+    @staticmethod
     def _patient_out(patient, user) -> PatientOut:
         return PatientOut(
             id=str(patient.id),
@@ -36,7 +99,13 @@ class UserService:
         )
 
     @staticmethod
-    async def list_staff() -> list[StaffOut]:
+    async def list_staff(
+        page: PageWindow = PageWindow(1, DEFAULT_PAGE_SIZE),
+        *,
+        search: str = "",
+        role: str | None = None,
+        is_active: bool | None = None,
+    ) -> list[StaffOut]:
         return [
             StaffOut(
                 id=str(user.id),
@@ -46,7 +115,9 @@ class UserService:
                 is_active=user.is_active,
                 created_at=user.created_at,
             )
-            for user in await UserRepository.list_staff()
+            for user in await UserRepository.list_staff(
+                page, search=search, role=role, is_active=is_active,
+            )
         ]
 
     @staticmethod
@@ -54,6 +125,13 @@ class UserService:
         return [
             LaboratorianSummary(id=str(user.id), full_name=user.full_name)
             for user in await UserRepository.list_by_role("laboratorian")
+        ]
+
+    @staticmethod
+    async def search_laboratorians(search: str, page: PageWindow) -> list[LaboratorianSummary]:
+        return [
+            LaboratorianSummary(id=str(user.id), full_name=user.full_name)
+            for user in await UserRepository.search_by_role("laboratorian", search, page)
         ]
 
     @staticmethod
@@ -107,49 +185,6 @@ class UserService:
         return await UserService.get_patient_profile(user_id)
 
     @staticmethod
-    async def list_doctors() -> List[DoctorOut]:
-        doctors = await ProfileRepository.list_doctors()
-
-        result = []
-
-        for d in doctors:
-            user = await UserRepository.get_by_id(str(d.user_id))
-
-            if not user:
-                continue
-
-            result.append(
-                DoctorOut(
-                    id=str(d.id),
-                    full_name=user.full_name,
-                    email=user.email,
-                    is_active_today=d.is_active_today,
-                    **UserService._doctor_profile_fields(d),
-                )
-            )
-
-        return result
-
-    @staticmethod
-    async def list_public_doctors() -> List[PublicDoctorOut]:
-        doctors = await ProfileRepository.list_doctors()
-        result = []
-
-        for doctor in doctors:
-            user = await UserRepository.get_by_id(str(doctor.user_id))
-            if not user or not user.is_active:
-                continue
-            result.append(
-                PublicDoctorOut(
-                    id=str(doctor.id),
-                    full_name=user.full_name,
-                    **UserService._doctor_profile_fields(doctor),
-                )
-            )
-
-        return result
-
-    @staticmethod
     async def update_doctor_profile(doctor_id: str, schema: DoctorProfileUpdate) -> DoctorOut:
         doctor = await ProfileRepository.get_doctor_by_id(doctor_id)
         if not doctor:
@@ -181,8 +216,11 @@ class UserService:
         )
 
     @staticmethod
-    async def list_patients() -> List[PatientOut]:
-        patients = await ProfileRepository.list_patients()
+    async def list_patients(page: PageWindow | None = None) -> List[PatientOut]:
+        patients = (
+            await ProfileRepository.list_page_patients(page)
+            if page else await ProfileRepository.list_patients()
+        )
 
         result = []
 
@@ -197,8 +235,13 @@ class UserService:
         return result
 
     @staticmethod
-    async def list_reception_patients() -> List[ReceptionPatientOut]:
-        patients = await ProfileRepository.list_patients()
+    async def list_reception_patients(
+        page: PageWindow | None = None,
+    ) -> List[ReceptionPatientOut]:
+        patients = (
+            await ProfileRepository.list_page_patients(page)
+            if page else await ProfileRepository.list_patients()
+        )
         result = []
 
         for patient in patients:
@@ -226,6 +269,19 @@ class UserService:
                 detail="Patient not found",
             )
         return UserService._patient_out(patient, user)
+
+    @staticmethod
+    async def get_doctor_patient(doctor_user_id: str, patient_id: str) -> DoctorPatientOut:
+        doctor = await ProfileRepository.get_doctor_by_user_id(doctor_user_id)
+        if not doctor or not await AppointmentRepository.has_assigned_patient(str(doctor.id), patient_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        patient = await ProfileRepository.get_patient_by_id(patient_id)
+        user = await UserRepository.get_by_id(str(patient.user_id)) if patient else None
+        if not patient or not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        return DoctorPatientOut(id=str(patient.id), full_name=user.full_name,
+                                phone=patient.phone, date_of_birth=patient.date_of_birth,
+                                gender=getattr(patient, "gender", None))
 
     @staticmethod
     async def update_admin_patient(
@@ -307,17 +363,24 @@ class UserService:
         )
 
     @staticmethod
-    async def list_assigned_patients(user_id: str) -> List[DoctorPatientOut]:
+    async def list_assigned_patients(
+        user_id: str, page: PageWindow | None = None,
+    ) -> List[DoctorPatientOut]:
         doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
         if not doctor:
             return []
 
-        appointments = [
-            appointment
-            for appointment in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
-            if not getattr(appointment, "doctor_assignment_pending", False)
-        ]
-        patient_ids = list(dict.fromkeys(str(appointment.patient_id) for appointment in appointments))
+        if page:
+            patient_ids = await AppointmentRepository.page_assigned_patient_ids(
+                str(doctor.id), page,
+            )
+        else:
+            appointments = [
+                appointment
+                for appointment in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
+                if not getattr(appointment, "doctor_assignment_pending", False)
+            ]
+            patient_ids = list(dict.fromkeys(str(appointment.patient_id) for appointment in appointments))
         result = []
 
         for patient_id in patient_ids:

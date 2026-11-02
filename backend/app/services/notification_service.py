@@ -2,6 +2,7 @@ from typing import List, Optional
 from beanie import PydanticObjectId
 from app.models.notification import Notification
 from app.repositories.notification_repository import NotificationRepository
+from app.core.pagination import PageWindow
 
 class NotificationService:
     @staticmethod
@@ -22,7 +23,11 @@ class NotificationService:
         return await NotificationRepository.create(notif)
 
     @staticmethod
-    async def get_user_notifications(user_id: str) -> List[Notification]:
+    async def get_user_notifications(
+        user_id: str, page: PageWindow | None = None,
+    ) -> List[Notification]:
+        if page is not None:
+            return await NotificationRepository.list_page_by_recipient_id(user_id, page)
         return await NotificationRepository.list_by_recipient_id(user_id)
 
     @staticmethod

@@ -8,8 +8,8 @@ import DoctorCard from '../../components/features/DoctorCard';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
-import ErrorState from '../../components/common/ErrorState';
 import { useAuth } from '../../context/useAuth';
+import ClinicalEntityPicker from './ClinicalEntityPicker';
 
 export default function AdminAppointmentBooking() {
   const navigate = useNavigate();
@@ -28,18 +28,6 @@ export default function AdminAppointmentBooking() {
   // Confirmation modal state
   const [modalOpen, setModalOpen] = useState(false);
 
-  // Fetch doctors
-  const {
-    data: doctors,
-    isLoading: loadingDoctors,
-    error: doctorsError
-  } = useQuery({
-    queryKey: ['bookingDoctors'],
-    queryFn: async () => {
-      const response = await api.get(isReceptionist ? '/users/reception/doctors' : '/users/doctors');
-      return response.data;
-    }
-  });
   const { data: bookingWindow } = useQuery({
     queryKey: ['bookingWindow'],
     queryFn: async () => (await api.get('/appointments/booking-window')).data,
@@ -62,17 +50,6 @@ export default function AdminAppointmentBooking() {
     },
   });
 
-  const {
-    data: patients,
-    isLoading: loadingPatients,
-    error: patientsError
-  } = useQuery({
-    queryKey: ['patients', user?.role],
-    queryFn: async () => {
-      const response = await api.get(isReceptionist ? '/users/reception/patients' : '/users/patients');
-      return response.data;
-    }
-  });
 
   // Mutation to book appointment
   const bookMutation = useMutation({
@@ -139,10 +116,6 @@ export default function AdminAppointmentBooking() {
     navigate(isReceptionist ? '/reception/dashboard' : '/admin/dashboard');
   };
 
-  if (doctorsError || patientsError) {
-    return <ErrorState message="Could not load the patient and physiotherapist directories." />;
-  }
-
   // Disable dates in the past
   const disabledDays = (date) => (
     isBefore(date, startOfToday())
@@ -189,52 +162,26 @@ export default function AdminAppointmentBooking() {
       <section className="flex flex-col gap-stack-md mt-4">
         <h2 className="font-headline-md text-headline-md">Patient</h2>
         <label className="font-label-md text-label-md text-on-surface-variant" htmlFor="patient_id">Book for an existing patient</label>
-        {loadingPatients ? (
-          <Skeleton variant="row" count={1} />
-        ) : (
-          <select
-            id="patient_id"
-            value={selectedPatient?.id || ''}
-            onChange={(event) => {
-              const patient = patients?.find((item) => item.id === event.target.value) || null;
+        <ClinicalEntityPicker path={isReceptionist ? '/users/reception/patients' : '/users/patients'}
+          label="Patient" selected={selectedPatient} describe={(patient) => `${patient.full_name} · ${patient.email}`}
+          onSelect={(patient) => {
               setSelectedPatient(patient);
               setSelectedDoctor(null);
               setSelectedTime('');
               setReason('');
               setStep(1);
               bookMutation.reset();
-            }}
-            className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest p-4"
-            required
-          >
-            <option value="">Select patient</option>
-            {patients?.map((patient) => (
-              <option key={patient.id} value={patient.id}>{patient.full_name} · {patient.email}</option>
-            ))}
-          </select>
-        )}
+            }} />
       </section>
 
       {/* STEP 1: Select Specialist */}
       {selectedPatient && <section className="flex flex-col gap-stack-md mt-4">
         <h2 className="font-headline-md text-headline-md">1. Select Specialist</h2>
-        {loadingDoctors ? (
-          <div className="space-y-4">
-            <Skeleton variant="row" count={2} />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-gutter">
-            {Array.isArray(doctors) && doctors.map((doc) => (
-              <DoctorCard
-                key={doc.id}
-                doctor={doc}
-                selected={selectedDoctor?.id === doc.id}
-                interactive
-                onClick={() => handleDoctorSelect(doc)}
-              />
-            ))}
-          </div>
-        )}
+        <ClinicalEntityPicker path={isReceptionist ? '/users/reception/doctors' : '/users/doctors'}
+          label="Physiotherapist" selected={selectedDoctor}
+          describe={(doctor) => `${doctor.full_name} · ${doctor.specialization}`}
+          onSelect={(doctor) => { if (doctor) handleDoctorSelect(doctor); else { setSelectedDoctor(null); setStep(1); setSelectedTime(''); } }} />
+        {selectedDoctor && <DoctorCard doctor={selectedDoctor} selected interactive={false} />}
       </section>}
 
       {/* STEP 2: Choose Date */}
@@ -315,6 +262,7 @@ export default function AdminAppointmentBooking() {
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              maxLength={500}
               placeholder="E.g., lower back pain during running..."
               className="w-full rounded-xl border border-outline-variant bg-surface-container-lowest p-4 font-body-md text-body-md focus:border-primary focus:ring-1 focus:ring-primary transition-colors placeholder-on-surface-variant/50"
               required

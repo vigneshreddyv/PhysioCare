@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
@@ -9,16 +10,14 @@ import EmptyState from '../../components/common/EmptyState';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
 import PatientIcon from '../../components/common/PatientIcon';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 const FILTERS = [
-  { value: 'upcoming', label: 'Upcoming', statuses: ['scheduled', 'in_progress'] },
-  { value: 'completed', label: 'Completed', statuses: ['completed'] },
-  { value: 'cancelled', label: 'Cancelled', statuses: ['cancelled'] },
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
-
-function visitTimestamp(appointment) {
-  return new Date(appointment.starts_at || `${appointment.appointment_date}T00:00:00`).getTime();
-}
 
 function visitDate(appointment) {
   try {
@@ -121,18 +120,22 @@ function AppointmentRecord({ appointment, onCancel, cancelPending }) {
 
 export default function PatientHistory() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [filter, setFilter] = useState('upcoming');
+  const [page, setPage] = useState(1);
   const [cancelTarget, setCancelTarget] = useState(null);
   const [notice, setNotice] = useState('');
   const {
-    data: appointments = [],
+    data: appointmentsPage,
     isLoading,
     error,
     refetch,
   } = useQuery({
-    queryKey: ['patientAppointments'],
-    queryFn: async () => (await api.get('/appointments')).data,
+    queryKey: ['patientAppointments', user?.id, filter, page],
+    queryFn: () => fetchClinicalPage(`/appointments/me/history?status_group=${filter}`, page),
+    gcTime: 0,
   });
+  useEffect(() => { setPage(1); setCancelTarget(null); setNotice(''); }, [user?.id]);
 
   const cancelMutation = useMutation({
     mutationFn: async (appointmentId) => (await api.post(`/appointments/${appointmentId}/cancel`)).data,
@@ -147,17 +150,7 @@ export default function PatientHistory() {
     },
   });
 
-  const groupedAppointments = useMemo(() => Object.fromEntries(FILTERS.map((option) => {
-    const matching = appointments.filter((appointment) => option.statuses.includes(appointment.status));
-    matching.sort((left, right) => (
-      option.value === 'upcoming'
-        ? visitTimestamp(left) - visitTimestamp(right)
-        : visitTimestamp(right) - visitTimestamp(left)
-    ));
-    return [option.value, matching];
-  })), [appointments]);
-
-  const activeAppointments = groupedAppointments[filter] || [];
+  const activeAppointments = appointmentsPage?.data || [];
   const cancellationError = cancelMutation.error?.response?.data?.detail
     || (cancelMutation.isError ? 'We could not cancel this appointment. Refresh and try again.' : '');
 
@@ -191,7 +184,7 @@ export default function PatientHistory() {
       <section className="patient-history__workspace" aria-labelledby="appointments-heading" data-patient-reveal>
         <div className="patient-history__section-heading patient-history__section-heading--managed">
           <div><p>Appointments</p><h2 id="appointments-heading">Your visit timeline</h2></div>
-          {!isLoading && <span className="patient-history__total">{appointments.length} total</span>}
+          {!isLoading && <span className="patient-history__total">{activeAppointments.length} on this page</span>}
         </div>
 
         <div className="patient-history__filters patient-history__filters--managed" role="tablist" aria-label="Appointment status">
@@ -202,10 +195,9 @@ export default function PatientHistory() {
               role="tab"
               aria-selected={filter === option.value}
               className="patient-history__filter"
-              onClick={() => setFilter(option.value)}
+              onClick={() => { setFilter(option.value); setPage(1); }}
             >
               <span>{option.label}</span>
-              <strong>{groupedAppointments[option.value]?.length || 0}</strong>
             </button>
           ))}
         </div>
@@ -236,6 +228,7 @@ export default function PatientHistory() {
             </div>
           )}
         </div>
+        {appointmentsPage && <ClinicalPageNav label={`${filter} appointments`} page={page} onPageChange={setPage} isLoading={isLoading} itemCount={activeAppointments.length} hasNext={appointmentsPage.hasNext} />}
       </section>
 
       <Modal

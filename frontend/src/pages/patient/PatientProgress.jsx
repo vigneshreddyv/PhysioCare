@@ -33,7 +33,7 @@ export default function PatientProgress() {
   } = useQuery({
     queryKey: ['carePlans'],
     queryFn: async () => {
-      const response = await api.get('/care-plans');
+      const response = await api.get('/care-plans', { params: { selection: 'active_latest' } });
       return response.data;
     },
     retry: 1

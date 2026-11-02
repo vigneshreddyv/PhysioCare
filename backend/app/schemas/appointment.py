@@ -7,10 +7,12 @@ from app.core.appointment_time import parse_time_slot
 from app.core.config import settings
 
 class AppointmentCreate(BaseModel):
-    doctor_id: str
+    model_config = ConfigDict(extra="forbid")
+
+    doctor_id: str = Field(min_length=1, max_length=128)
     appointment_date: date
-    time_slot: str
-    reason: str
+    time_slot: str = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=1, max_length=500)
 
     @field_validator("appointment_date", mode="before")
     @classmethod
@@ -31,16 +33,16 @@ class AppointmentCreate(BaseModel):
 
 
 class AdminAppointmentCreate(AppointmentCreate):
-    patient_id: str
+    patient_id: str = Field(min_length=1, max_length=128)
 
 
 class ReceptionAppointmentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    patient_id: str
-    doctor_id: str
+    patient_id: str = Field(min_length=1, max_length=128)
+    doctor_id: str = Field(min_length=1, max_length=128)
     appointment_date: date
-    time_slot: str
+    time_slot: str = Field(min_length=1, max_length=20)
 
     _normalize_calendar_date = field_validator("appointment_date", mode="before")(
         AppointmentCreate.normalize_calendar_date.__func__
@@ -50,9 +52,12 @@ class ReceptionAppointmentCreate(BaseModel):
     )
 
 class AppointmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0)
     status: Optional[Literal["scheduled", "in_progress", "completed", "cancelled", "no_show"]] = None
-    billing_status: Optional[str] = None
-    billing_amount: Optional[float] = None
+    billing_status: Optional[Literal["pending", "paid", "unconfigured"]] = None
+    billing_amount: Optional[float] = Field(default=None, ge=0, le=10_000_000)
 
 class AppointmentOut(BaseModel):
     id: str
@@ -81,6 +86,7 @@ class AppointmentOut(BaseModel):
     payment_order_id: Optional[str] = None
     payment_id: Optional[str] = None
     cancelled_at: Optional[datetime] = None
+    revision: int = 0
     can_patient_cancel: bool
     cancellation_deadline: Optional[datetime] = None
     cancellation_message: str
@@ -108,6 +114,7 @@ class DoctorAppointmentOut(BaseModel):
     duration_days: Optional[int] = None
     pain_severity: Optional[str] = None
     status: str
+    revision: int = 0
     created_at: datetime
 
 

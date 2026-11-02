@@ -2,7 +2,7 @@ import React from 'react';
 import Skeleton from '../../../components/common/Skeleton';
 import { HealthcareBarChart, HealthcarePieChart, HealthcareLineChart } from '../../../components/features';
 
-export default function DashboardCharts({ stats, statsLoading, appointments }) {
+export default function DashboardCharts({ stats, statsLoading, activity }) {
   // Prepare chart data from actual API response
   const appointmentsChartData = stats?.appointments_per_week?.map((item) => ({
     name: item.name,
@@ -19,27 +19,7 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
     value: item.value,
   })) || [];
 
-  const today = new Date().toDateString();
-  const todaysAppointments = (appointments || []).filter(
-    (appointment) => new Date(appointment.appointment_date).toDateString() === today,
-  );
-  const appointmentHour = (appointment) => {
-    const match = appointment.time_slot?.match(/(\d{1,2})(?::\d{2})?\s*(AM|PM)/i);
-    if (!match) return new Date(appointment.appointment_date).getHours();
-    let hour = Number(match[1]) % 12;
-    if (match[2].toUpperCase() === 'PM') hour += 12;
-    return hour;
-  };
-  const scheduleCounts = todaysAppointments.reduce(
-    (counts, appointment) => {
-      const hour = appointmentHour(appointment);
-      if (hour < 12) counts.morning += 1;
-      else if (hour < 17) counts.afternoon += 1;
-      else counts.evening += 1;
-      return counts;
-    },
-    { morning: 0, afternoon: 0, evening: 0 },
-  );
+  const scheduleCounts = activity?.schedule_counts || { morning: 0, afternoon: 0, evening: 0 };
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 md:grid-cols-2">
@@ -76,7 +56,7 @@ export default function DashboardCharts({ stats, statsLoading, appointments }) {
             data={revenueChartData}
             label="revenue"
             title="Recorded paid total"
-            unit="$"
+            unit="INR "
             height={250}
           />
         )}

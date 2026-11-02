@@ -47,6 +47,7 @@ class CarePlan(Document):
     start_date: datetime
     target_date: datetime
     status: Literal["active", "completed", "paused", "cancelled"] = "active"
+    revision: int = 0
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

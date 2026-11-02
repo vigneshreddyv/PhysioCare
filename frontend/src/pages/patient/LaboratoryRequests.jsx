@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -8,10 +9,34 @@ import ErrorState from '../../components/common/ErrorState';
 import PatientIcon from '../../components/common/PatientIcon';
 import { labCategories, labDemoCatalogue } from '../../content/labDemoCatalogue';
 import { closePdfViewer, preparePdfViewer, showPdfBlob } from '../../utils/openPdfBlob';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 const labels = { pending_clinic_confirmation: 'Pending clinic confirmation', approved_for_coordination: 'Approved for coordination', declined: 'Declined', withdrawn: 'Withdrawn' };
 
+export function LaboratoryRequestHistory({ requests, withdraw }) {
+  return <section className="portal-section-card" aria-labelledby="lab-history-heading">
+    <div className="portal-section-card__header"><div><p className="portal-section__eyebrow">Your requests</p><h2 id="lab-history-heading">Laboratory review status</h2></div></div>
+    {requests.isLoading ? <p className="p-6" role="status">Loading laboratory requests…</p>
+      : requests.isError ? <div className="p-6"><ErrorState message="Could not load your laboratory requests." onRetry={() => requests.refetch()} /></div>
+        : !requests.data?.length ? <div className="p-6"><EmptyState title="No laboratory requests" message="Selected tests will appear here only after you submit them for clinic review." icon="biotech" /></div>
+          : <div className="reception-schedule-grid">{requests.data.map((item) => <article className="portal-mobile-record" key={item.id}><strong>{labels[item.status] || item.status}</strong><span>{item.mode === 'home_collection' ? 'Home collection request' : 'Clinic visit request'} · {item.selected_tests.length} tests</span><p>{item.confirmation_message}</p>{['pending_clinic_confirmation', 'approved_for_coordination'].includes(item.status) && <button type="button" onClick={() => withdraw.mutate(item.id)}>Withdraw request</button>}</article>)}</div>}
+  </section>;
+}
+
+export function ReleasedLaboratoryReports({ reports, openReport }) {
+  return <section className="portal-section-card" aria-labelledby="lab-reports-heading">
+    <div className="portal-section-card__header"><div><p className="portal-section__eyebrow">Your records</p><h2 id="lab-reports-heading">Released laboratory reports</h2></div></div>
+    {openReport.isError && <p className="patient-booking__submit-error" role="alert">The report could not be opened. Allow pop-ups, then try again.</p>}
+    {reports.isLoading ? <p className="p-6" role="status">Loading reports…</p>
+      : reports.isError ? <div className="p-6"><ErrorState message="Could not load your released laboratory reports." onRetry={() => reports.refetch()} /></div>
+        : !reports.data?.length ? <div className="p-6"><EmptyState title="No released reports" message="Reports appear here only after they are reviewed and released to you." icon="description" /></div>
+          : <div className="reception-schedule-grid">{reports.data.map((report) => <article className="portal-mobile-record" key={report.request_id}><strong>{report.report_file_name || 'Laboratory report'}</strong><span>{report.selected_tests.join(', ')}</span><button type="button" disabled={openReport.isPending} onClick={() => openReport.mutate({ report, viewer: preparePdfViewer() })}>{openReport.isPending && openReport.variables?.report?.request_id === report.request_id ? 'Opening…' : 'Open report'}</button></article>)}</div>}
+  </section>;
+}
+
 export default function LaboratoryRequests() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState('clinic_visit');
   const [category, setCategory] = useState('All');
@@ -22,10 +47,14 @@ export default function LaboratoryRequests() {
   const [saveAddress, setSaveAddress] = useState(false);
   const [locationNotice, setLocationNotice] = useState('');
   const [notice, setNotice] = useState('');
+  const [requestPage, setRequestPage] = useState(1);
+  const [reportPage, setReportPage] = useState(1);
+  useEffect(() => { setRequestPage(1); setReportPage(1); }, [user?.id]);
   const submissionRef = useRef(null);
-  const requests = useQuery({ queryKey: ['myLabRequests'], queryFn: async () => (await api.get('/lab-requests/me')).data });
-  const reports = useQuery({ queryKey: ['myReleasedLabReports'], queryFn: async () => (await api.get('/lab-requests/me/reports')).data });
-  const context = useQuery({ queryKey: ['homeVisitContext'], queryFn: async () => (await api.get('/home-visit-requests/me/context')).data });
+  const requestQuery = useQuery({ queryKey: ['myLabRequests', user?.id, requestPage], queryFn: () => fetchClinicalPage('/lab-requests/me', requestPage), gcTime: 0 });
+  const reportQuery = useQuery({ queryKey: ['myReleasedLabReports', user?.id, reportPage], queryFn: () => fetchClinicalPage('/lab-requests/me/reports', reportPage, 'request_id'), gcTime: 0 });
+  const requests = { ...requestQuery, data: requestQuery.data?.data };
+  const reports = { ...reportQuery, data: reportQuery.data?.data };
   const create = useMutation({
     mutationFn: async ({ payload, submissionKey }) => (await api.post('/lab-requests', payload, { headers: { 'Idempotency-Key': submissionKey } })).data,
     onSuccess: () => { submissionRef.current = null; queryClient.invalidateQueries({ queryKey: ['myLabRequests'] }); setSelected([]); setAddress(''); setSaveAddress(false); setNotice('Your laboratory request was sent. The clinic will contact you to confirm the next step.'); },
@@ -63,7 +92,6 @@ export default function LaboratoryRequests() {
     }
     create.mutate({ payload, submissionKey: submissionRef.current.key });
   };
-  if (requests.error || context.error || reports.error) return <ErrorState message="Could not load laboratory requests." onRetry={() => { requests.refetch(); context.refetch(); reports.refetch(); }} />;
   return <div className="patient-lab patient-page animate-fade-in pb-28">
     <header className="patient-lab__hero patient-workflow-header"><div><Link to="/patient/services" className="patient-workflow-header__back"><PatientIcon name="back" size={18} />Services</Link><p className="patient-page__eyebrow">Laboratory services</p><h1>Request laboratory tests.</h1><p>Choose how you would like the tests collected. The clinic will confirm preparation, timing, and availability.</p></div><div className="patient-workflow-header__icon" aria-hidden="true"><PatientIcon name="lab" size={38} /></div></header>
     {notice && <div className="patient-dashboard__notice" role="status">{notice}</div>}
@@ -74,7 +102,9 @@ export default function LaboratoryRequests() {
     <section className="patient-lab__catalogue" aria-labelledby="lab-catalogue-heading"><div className="patient-lab__catalogue-head"><div><p className="patient-page__eyebrow">Step 2</p><h2 id="lab-catalogue-heading">Select laboratory tests</h2><p>{labDemoCatalogue.length} tests available to request.</p></div><select aria-label="Sort tests" value={sort} onChange={(event) => setSort(event.target.value)}><option value="az">A–Z</option><option value="za">Z–A</option></select></div><label className="patient-lab__search"><PatientIcon name="search" size={20} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tests" /></label><div className="patient-lab__chips" role="group" aria-label="Filter by category">{labCategories.map((item) => <button type="button" key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}</div><div className="patient-lab__test-grid">{visible.map((test) => <button type="button" key={test.id} aria-pressed={selected.includes(test.id)} onClick={() => toggle(test.id)} className="patient-lab__test"><PatientIcon name="lab" /><small>{test.category}</small><strong>{test.name}</strong><p>{test.description}</p><span>{selected.includes(test.id) ? 'Selected' : 'Select test'}</span></button>)}</div></section>
     {create.isError && <p className="patient-booking__submit-error" role="alert">{create.error?.response?.data?.detail || 'The laboratory request was not submitted.'}</p>}
     <div className={`patient-lab__selection${selected.length ? '' : ' patient-lab__selection--empty'}`}><div><strong>{selected.length} selected</strong><span>Estimated total: unavailable</span></div><Button type="button" disabled={!selected.length || (mode === 'home_collection' && address.trim().length < 10) || create.isPending} onClick={submit}>{create.isPending ? 'Submitting…' : 'Continue to clinic review'}</Button></div>
-    <section className="portal-section-card" aria-labelledby="lab-history-heading"><div className="portal-section-card__header"><div><p className="portal-section__eyebrow">Your requests</p><h2 id="lab-history-heading">Laboratory review status</h2></div></div>{!requests.data?.length ? <div className="p-6"><EmptyState title="No laboratory requests" message="Selected tests will appear here only after you submit them for clinic review." icon="biotech" /></div> : <div className="reception-schedule-grid">{requests.data.map((item) => <article className="portal-mobile-record" key={item.id}><strong>{labels[item.status] || item.status}</strong><span>{item.mode === 'home_collection' ? 'Home collection request' : 'Clinic visit request'} · {item.selected_tests.length} tests</span><p>{item.confirmation_message}</p>{['pending_clinic_confirmation','approved_for_coordination'].includes(item.status) && <button type="button" onClick={() => withdraw.mutate(item.id)}>Withdraw request</button>}</article>)}</div>}</section>
-    <section className="portal-section-card" aria-labelledby="lab-reports-heading"><div className="portal-section-card__header"><div><p className="portal-section__eyebrow">Your records</p><h2 id="lab-reports-heading">Released laboratory reports</h2></div></div>{openReport.isError && <p className="patient-booking__submit-error" role="alert">The report could not be opened. Allow pop-ups, then try again.</p>}{reports.isLoading ? <p className="p-6" role="status">Loading reports…</p> : !reports.data?.length ? <div className="p-6"><EmptyState title="No released reports" message="Reports appear here only after they are reviewed and released to you." icon="description" /></div> : <div className="reception-schedule-grid">{reports.data.map((report) => <article className="portal-mobile-record" key={report.request_id}><strong>{report.report_file_name || 'Laboratory report'}</strong><span>{report.selected_tests.join(', ')}</span><button type="button" disabled={openReport.isPending} onClick={() => openReport.mutate({ report, viewer: preparePdfViewer() })}>{openReport.isPending && openReport.variables?.report?.request_id === report.request_id ? 'Opening…' : 'Open report'}</button></article>)}</div>}</section>
+    <LaboratoryRequestHistory requests={requests} withdraw={withdraw} />
+    <ClinicalPageNav label="My laboratory requests" page={requestPage} onPageChange={setRequestPage} isLoading={requests.isLoading} itemCount={requests.data?.length || 0} />
+    <ReleasedLaboratoryReports reports={reports} openReport={openReport} />
+    <ClinicalPageNav label="My laboratory reports" page={reportPage} onPageChange={setReportPage} isLoading={reports.isLoading} itemCount={reports.data?.length || 0} />
   </div>;
 }

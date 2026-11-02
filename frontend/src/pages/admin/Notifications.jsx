@@ -1,11 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState([]);
-
-  // We'll fetch appointments and stats to generate similar notifications as in AdminDashboard
   const {
     data: stats,
     isLoading: statsLoading,
@@ -19,53 +16,32 @@ export default function Notifications() {
   });
 
   const {
-    data: appointments,
-    isLoading: appointmentsLoading,
-    error: appointmentsError
+    data: activity,
+    isLoading: activityLoading,
+    error: activityError
   } = useQuery({
-    queryKey: ['appointments'],
-    queryFn: async () => {
-      const response = await api.get('/appointments');
-      return response.data;
-    }
+    queryKey: ['adminDailyActivity'],
+    queryFn: async () => (await api.get('/analytics/admin-daily-activity')).data,
   });
 
-  useEffect(() => {
-    if (
-      !statsLoading &&
-      !appointmentsLoading &&
-      stats &&
-      appointments &&
-      Array.isArray(appointments) // Added this check to ensure appointments is an array
-    ) {
-      const generatedNotifications = [];
-
-      // Add notification for new appointments today
-      const today = new Date();
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const todayAppointments = appointments.filter(apt => {
-        const aptDate = new Date(apt.appointment_date);
-        return aptDate.toDateString() === today.toDateString();
-      }).length;
-      const yesterdayAppointments = appointments.filter(apt => {
-        const aptDate = new Date(apt.appointment_date);
-        return aptDate.toDateString() === yesterday.toDateString();
-      }).length;
+  const notifications = [];
+  if (stats && activity) {
+      const todayAppointments = activity.today_appointments || 0;
+      const yesterdayAppointments = activity.yesterday_appointments || 0;
 
       if (todayAppointments > 0) {
         const change = todayAppointments - yesterdayAppointments;
         if (change > 0) {
-          generatedNotifications.push({
-            id: `today-appointments-${Date.now()}`,
+          notifications.push({
+            id: 'today-appointments',
             type: 'success',
             title: 'More appointments today',
             message: `${todayAppointments} appointments today, which is ${change} more than yesterday.`,
             time: 'Today'
           });
         } else if (change < 0) {
-          generatedNotifications.push({
-            id: `today-appointments-${Date.now()}`,
+          notifications.push({
+            id: 'today-appointments',
             type: 'warning',
             title: 'Fewer appointments today',
             message: `${todayAppointments} appointments today, which is ${Math.abs(change)} fewer than yesterday.`,
@@ -77,24 +53,22 @@ export default function Notifications() {
       // Add notification for new patients
       const newPatients = stats?.new_patients || 0;
       if (newPatients > 0) {
-        generatedNotifications.push({
-          id: `new-patients-${Date.now()}`,
+        notifications.push({
+          id: 'new-patients',
           type: 'info',
           title: 'New patients registered',
-          message: `${newPatients} new patients registered this week.`,
-          time: 'This week'
+          message: `${newPatients} new patients registered in the selected period.`,
+          time: 'Selected period'
         });
       }
 
-      setNotifications(generatedNotifications);
-    }
-  }, [statsLoading, appointmentsLoading, stats, appointments]);
+  }
 
-  if (statsError || appointmentsError) {
+  if (statsError || activityError) {
     return <div className="p-6">Error loading notifications.</div>;
   }
 
-  if (statsLoading || appointmentsLoading) {
+  if (statsLoading || activityLoading) {
     return <div className="p-6 text-center">Loading notifications...</div>;
   }
 

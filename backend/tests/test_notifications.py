@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from beanie import PydanticObjectId
 
 from app.core.time import utc_now
+from app.core.pagination import PageWindow
 from app.models.notification import Notification
 from app.models.user import User
 from app.services.notification_service import NotificationService
@@ -137,7 +138,7 @@ async def test_list_notifications_api_endpoint():
         assert response[0].title == "Appointment Confirmed"
         assert response[0].recipient_user_id == "000000000000000000000000"
         assert response[0].is_read is False
-        mock_get.assert_called_once_with("000000000000000000000000")
+        mock_get.assert_called_once_with("000000000000000000000000", PageWindow(1, 50))
 
 
 @pytest.mark.asyncio

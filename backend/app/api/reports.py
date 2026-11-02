@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from app.models.user import User
@@ -11,6 +11,7 @@ from app.services.report_service import (
     ReportTargetUnavailable,
 )
 from app.services.clinical_report_storage import ClinicalReportStorage
+from app.core.pagination import DEFAULT_PAGE_SIZE, page_window
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -32,9 +33,13 @@ def report_response(report) -> ReportResponse:
 
 @router.get("", response_model=List[ReportResponse])
 async def list_reports(
-    current_user: User = Depends(RoleChecker(["patient"]))
+    current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    search: str | None = Query(default=None, max_length=100),
 ):
     """List all reports for the authenticated patient."""
+    window = page_window(page, page_size)
     from app.repositories.profile_repository import ProfileRepository
     patient = await ProfileRepository.get_patient_by_user_id(str(current_user.id))
     if not patient:
@@ -42,7 +47,10 @@ async def list_reports(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient profile not found"
         )
-    reports = await ReportService.get_reports_by_patient_id(str(patient.id))
+    term = search.strip() if search else None
+    reports = await ReportService.get_reports_by_patient_id(
+        str(patient.id), window, term,
+    ) if term else await ReportService.get_reports_by_patient_id(str(patient.id), window)
     return [report_response(report) for report in reports]
 
 @router.get("/{report_id}", response_model=ReportResponse)
@@ -101,11 +109,16 @@ async def download_report_file(
         path=storage_path,
         media_type="application/pdf",
         filename="clinical-report.pdf",
+        headers={
+            "Cache-Control": "private, no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
 
 @router.post("", response_model=ReportResponse, status_code=status.HTTP_201_CREATED)
 async def create_report_by_admin(
-    report_data_str: str = Form(...),
+    report_data_str: str = Form(..., max_length=64 * 1024),
     file: Optional[UploadFile] = File(None),
     current_user: User = Depends(RoleChecker(["admin", "doctor"]))
 ):

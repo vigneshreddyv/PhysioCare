@@ -1,11 +1,12 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
 import Skeleton from '../../components/common/Skeleton';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 import {
-  filterStaff,
   getStaffCreateError,
   staffRoleLabels,
   staffRoles,
@@ -35,10 +36,18 @@ export default function StaffManagement() {
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const deferredQuery = useDeferredValue(query);
+  const staffFilters = new URLSearchParams();
+  if (deferredQuery.trim()) staffFilters.set('search', deferredQuery.trim());
+  if (roleFilter !== 'all') staffFilters.set('role', roleFilter);
+  if (statusFilter !== 'all') staffFilters.set('account_status', statusFilter);
+  const staffPath = `/users/staff${staffFilters.size ? `?${staffFilters}` : ''}`;
 
   const staffQuery = useQuery({
-    queryKey: ['staff'],
-    queryFn: async () => (await api.get('/users/staff')).data,
+    queryKey: ['staff', page, deferredQuery, roleFilter, statusFilter],
+    queryFn: () => fetchClinicalPage(staffPath, page),
+    gcTime: 0,
   });
 
   const createStaff = useMutation({
@@ -54,10 +63,7 @@ export default function StaffManagement() {
     },
   });
 
-  const visibleStaff = useMemo(
-    () => filterStaff(staffQuery.data, { query, role: roleFilter, status: statusFilter }),
-    [staffQuery.data, query, roleFilter, statusFilter],
-  );
+  const visibleStaff = staffQuery.data?.data || [];
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -163,18 +169,18 @@ export default function StaffManagement() {
         <div className="grid gap-3 p-5 sm:grid-cols-3">
           <label className="grid gap-2 text-sm font-semibold">
             Search name or email
-            <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal" />
+            <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal" />
           </label>
           <label className="grid gap-2 text-sm font-semibold">
             Filter by role
-            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal">
+            <select value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setPage(1); }} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal">
               <option value="all">All roles</option>
               {staffRoles.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
           <label className="grid gap-2 text-sm font-semibold">
             Filter by account status
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal">
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }} className="min-h-11 rounded-xl border border-outline-variant bg-surface-container-lowest px-3 font-normal">
               <option value="all">All statuses</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
@@ -187,7 +193,7 @@ export default function StaffManagement() {
         ) : staffQuery.isLoading ? (
           <div className="p-5"><Skeleton variant="row" count={3} /></div>
         ) : !visibleStaff.length ? (
-          <div className="p-5"><EmptyState title={staffQuery.data?.length ? 'No matching staff' : 'No staff accounts'} message={staffQuery.data?.length ? 'Try changing the search or filters.' : 'Staff accounts will appear here after an administrator creates them.'} icon="manage_accounts" /></div>
+          <div className="p-5"><EmptyState title={(query || roleFilter !== 'all' || statusFilter !== 'all') ? 'No matching staff' : 'No staff accounts'} message={(query || roleFilter !== 'all' || statusFilter !== 'all') ? 'Try changing the search or filters.' : 'Staff accounts will appear here after an administrator creates them.'} icon="manage_accounts" /></div>
         ) : (
           <>
             <div className="portal-desktop-table overflow-x-auto">
@@ -233,6 +239,7 @@ export default function StaffManagement() {
             </div>
           </>
         )}
+        <ClinicalPageNav label="Staff accounts" page={page} onPageChange={setPage} isLoading={staffQuery.isFetching} itemCount={visibleStaff.length} hasNext={staffQuery.data?.hasNext} />
       </section>
     </div>
   );

@@ -43,7 +43,7 @@ In the Razorpay Dashboard, switch to **Test Mode**, create a webhook, and set it
 https://<public-staging-host>/api/webhooks/razorpay
 ```
 
-Subscribe to `payment.captured` and `payment.failed`. Copy the webhook secret into the backend `RAZORPAY_WEBHOOK_SECRET` setting. The implementation verifies `X-Razorpay-Signature` against the original UTF-8 request body and deduplicates by `X-Razorpay-Event-Id`.
+Subscribe to `payment.captured` and `payment.failed`. Copy the webhook secret into the backend `RAZORPAY_WEBHOOK_SECRET` setting. The implementation verifies `X-Razorpay-Signature` against the original UTF-8 request body, deduplicates by a SHA-256 digest of that verified body, and rejects a reused `X-Razorpay-Event-Id` with a conflicting body.
 
 Razorpay cannot deliver webhooks to localhost. Use a publicly reachable HTTPS staging endpoint or a supported HTTPS tunnel for webhook testing. Checkout signature verification can be exercised locally, but webhook delivery cannot.
 

@@ -1484,7 +1484,7 @@ async def test_admin_cannot_mark_appointment_paid_without_verified_attempt(monke
 
     with pytest.raises(HTTPException) as error:
         await AppointmentService.update_appointment(
-            str(appointment.id), AppointmentUpdate(billing_status="paid"), "admin-user", "admin"
+            str(appointment.id), AppointmentUpdate(billing_status="paid", expected_revision=0), "admin-user", "admin"
         )
 
     assert error.value.status_code == 403
@@ -1513,7 +1513,7 @@ async def test_admin_status_cancellation_uses_atomic_repository_transition(monke
     monkeypatch.setattr(AppointmentService, "_format_appointment", AsyncMock(return_value="formatted"))
 
     result = await AppointmentService.update_appointment(
-        str(appointment.id), AppointmentUpdate(status="cancelled"), "admin-user", "admin"
+        str(appointment.id), AppointmentUpdate(status="cancelled", expected_revision=0), "admin-user", "admin"
     )
 
     assert result == "formatted"
@@ -1525,6 +1525,8 @@ async def test_admin_status_cancellation_uses_atomic_repository_transition(monke
 async def test_verified_attempt_allows_paid_status_to_be_reflected(monkeypatch):
     appointment = SimpleNamespace(
         id=PydanticObjectId("222222222222222222222222"),
+        patient_id=PydanticObjectId("111111111111111111111111"),
+        doctor_id=PydanticObjectId("333333333333333333333333"),
         billing_status="pending",
         billing_amount=120,
         payment_order_id="order_test_1",
@@ -1533,15 +1535,17 @@ async def test_verified_attempt_allows_paid_status_to_be_reflected(monkeypatch):
     monkeypatch.setattr(AppointmentRepository, "get_by_id", AsyncMock(return_value=appointment))
     monkeypatch.setattr(PaymentAttempt, "find_one", AsyncMock(return_value=payment_attempt(status="success")))
     monkeypatch.setattr(AppointmentRepository, "get_by_id", AsyncMock(side_effect=[appointment, appointment]))
+    update_if_revision = AsyncMock(return_value=appointment)
+    monkeypatch.setattr(AppointmentRepository, "update_if_revision", update_if_revision)
     monkeypatch.setattr(AppointmentService, "_format_appointment", AsyncMock(return_value="formatted"))
 
     result = await AppointmentService.update_appointment(
-        str(appointment.id), AppointmentUpdate(billing_status="paid"), "admin-user", "admin"
+        str(appointment.id), AppointmentUpdate(billing_status="paid", expected_revision=0), "admin-user", "admin"
     )
 
     assert result == "formatted"
-    assert appointment.billing_status == "paid"
-    appointment.save.assert_awaited_once()
+    assert update_if_revision.await_args.kwargs["set_fields"]["billing_status"] == "paid"
+    appointment.save.assert_not_awaited()
 
 
 @pytest.mark.asyncio

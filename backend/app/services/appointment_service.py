@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
@@ -13,9 +15,16 @@ from app.core.appointment_time import (
     validate_booking_date,
 )
 from app.core.config import settings
+from app.core.pagination import PageWindow
 from app.models.appointment import Appointment
+from app.models.patient import Patient
+from app.models.doctor import Doctor
+from app.models.user import User
 from app.models.payment_attempt import PaymentAttempt
-from app.repositories.appointment_repository import AppointmentRepository
+from app.repositories.appointment_repository import (
+    AppointmentMutationConflict,
+    AppointmentRepository,
+)
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.appointment import (
@@ -29,10 +38,99 @@ from app.schemas.appointment import (
     ReceptionAppointmentCreate,
     ReceptionAppointmentOut,
 )
+from app.schemas.home_visit import AdminHomeVisitBookingOut
 from app.services.clinician_schedule_service import ClinicianScheduleService
 
 
 class AppointmentService:
+    @staticmethod
+    async def _page_profile_maps(
+        appointments: list,
+        doctor_field: str = "doctor_id",
+        *,
+        include_patient_phone: bool = False,
+        include_patient_email: bool = False,
+    ):
+        """Fetch only the identity fields needed to format one authorized page."""
+        if not appointments:
+            return {}, {}, {}
+        patient_ids = list({item.patient_id for item in appointments})
+        doctor_ids = list({getattr(item, doctor_field) for item in appointments})
+        patient_projection = {"user_id": 1}
+        if include_patient_phone:
+            patient_projection["phone"] = 1
+        patients = await Patient.get_pymongo_collection().find(
+            {"_id": {"$in": patient_ids}}, patient_projection,
+        ).to_list(length=len(patient_ids))
+        doctors = await Doctor.get_pymongo_collection().find(
+            {"_id": {"$in": doctor_ids}}, {"user_id": 1},
+        ).to_list(length=len(doctor_ids))
+        patient_user_ids = list({row["user_id"] for row in patients})
+        doctor_user_ids = list({row["user_id"] for row in doctors})
+        user_projection = {"full_name": 1}
+        if include_patient_email:
+            user_projection["email"] = 1
+        patient_users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": patient_user_ids}}, user_projection,
+        ).to_list(length=len(patient_user_ids)) if patient_user_ids else []
+        patient_user_id_set = set(patient_user_ids)
+        doctor_only_user_ids = [item for item in doctor_user_ids if item not in patient_user_id_set]
+        doctor_users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": doctor_only_user_ids}}, {"full_name": 1},
+        ).to_list(length=len(doctor_only_user_ids)) if doctor_only_user_ids else []
+        users = patient_users + doctor_users
+        return (
+            {row["_id"]: SimpleNamespace(id=row["_id"], user_id=row["user_id"],
+                                          phone=row.get("phone")) for row in patients},
+            {row["_id"]: SimpleNamespace(id=row["_id"], user_id=row["user_id"])
+             for row in doctors},
+            {row["_id"]: SimpleNamespace(id=row["_id"], full_name=row["full_name"],
+                                          email=row.get("email")) for row in users},
+        )
+
+    @staticmethod
+    async def _format_appointment_page(appointments: list) -> list[AppointmentOut]:
+        if not appointments:
+            return []
+        patients, doctors, users = await AppointmentService._page_profile_maps(appointments)
+        result = []
+        for appointment in appointments:
+            patient = patients.get(appointment.patient_id)
+            doctor = doctors.get(appointment.doctor_id)
+            patient_user = users.get(patient.user_id) if patient else None
+            doctor_user = users.get(doctor.user_id) if doctor else None
+            if not all((patient, doctor, patient_user, doctor_user)):
+                raise HTTPException(status_code=404, detail="Related patient or doctor not found")
+            result.append(await AppointmentService._format_appointment(
+                appointment,
+                patient=patient,
+                doctor=doctor,
+                patient_user=patient_user,
+                doctor_user=doctor_user,
+            ))
+        return result
+
+    @staticmethod
+    async def doctor_dashboard_summary(user_id: str) -> dict[str, int]:
+        doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
+        if not doctor:
+            return {"open_visits": 0, "completed_sessions": 0, "assigned_patients": 0}
+        return await AppointmentRepository.doctor_dashboard_summary(str(doctor.id))
+
+    @staticmethod
+    async def reception_schedule_summary(
+        start_date: date | None = None, end_date: date | None = None,
+    ) -> dict[str, int]:
+        return await AppointmentRepository.reception_schedule_summary(start_date, end_date)
+    @staticmethod
+    async def list_scheduled_home_visits(page: PageWindow) -> list[AdminHomeVisitBookingOut]:
+        rows = await AppointmentRepository.list_page_scheduled_home_visits(page)
+        return [AdminHomeVisitBookingOut(
+            id=str(row["_id"]), patient_name=row["patient_name"],
+            doctor_id="" if row.get("doctor_assignment_pending") else str(row["doctor_id"]),
+            doctor_assignment_pending=bool(row.get("doctor_assignment_pending")),
+            appointment_date=row["appointment_date"], time_slot=row["time_slot"],
+        ) for row in rows]
     @staticmethod
     def get_booking_window() -> BookingWindowOut:
         earliest, latest = booking_window()
@@ -146,7 +244,9 @@ class AppointmentService:
         if not doctor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Doctor not found")
 
-        appointments = await AppointmentRepository.list_active_by_doctor_id(doctor_id)
+        appointments = await AppointmentRepository.list_active_by_doctor_id(
+            doctor_id, appointment_date, appointment_date,
+        )
         occupied = set()
         for appointment in appointments:
             try:
@@ -175,11 +275,13 @@ class AppointmentService:
             doctor_id=doctor_id,
             appointment_date=appointment_date,
             clinic_timezone=settings.CLINIC_TIMEZONE,
-            demo_configuration=not published,
+            demo_configuration=not published and bool(schedule_slots),
             configuration_label=(
                 "Administrator-published clinician schedule"
                 if published
                 else "Configurable demonstration schedule; not verified clinic or doctor working hours"
+                if schedule_slots
+                else "No published clinician schedule is available"
             ),
             slot_minutes=settings.DEMO_SLOT_MINUTES,
             window_start=schedule_slots[0] if schedule_slots else "Closed",
@@ -193,7 +295,12 @@ class AppointmentService:
         starts_at: datetime,
         exclude_appointment_id: str | None = None,
     ) -> bool:
-        appointments = await AppointmentRepository.list_active_by_doctor_id(doctor_id)
+        clinic_date = starts_at.replace(tzinfo=timezone.utc).astimezone(
+            ZoneInfo(settings.CLINIC_TIMEZONE)
+        ).date()
+        appointments = await AppointmentRepository.list_active_by_doctor_id(
+            doctor_id, clinic_date, clinic_date,
+        )
         for appointment in appointments:
             if exclude_appointment_id and str(appointment.id) == exclude_appointment_id:
                 continue
@@ -206,10 +313,17 @@ class AppointmentService:
         return False
 
     @staticmethod
-    async def list_appointments(user_id: str, role: str) -> List[AppointmentOut]:
+    async def list_appointments(
+        user_id: str, role: str, page: PageWindow | None = None,
+        *, statuses: list[str] | None = None,
+        start_date: date | None = None, end_date: date | None = None,
+    ) -> List[AppointmentOut]:
 
         if role == "admin":
-            appointments = await AppointmentRepository.list_all()
+            appointments = (
+                await AppointmentRepository.list_page_all(page)
+                if page is not None else await AppointmentRepository.list_all()
+            )
 
         elif role == "doctor":
             doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
@@ -217,11 +331,19 @@ class AppointmentService:
             if not doctor:
                 return []
 
-            appointments = [
-                appointment
-                for appointment in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
-                if not getattr(appointment, "doctor_assignment_pending", False)
-            ]
+            if page is not None:
+                if statuses or start_date or end_date:
+                    appointments = await AppointmentRepository.list_page_by_doctor_id(
+                        str(doctor.id), page, statuses, start_date, end_date,
+                    )
+                else:
+                    appointments = await AppointmentRepository.list_page_by_doctor_id(str(doctor.id), page)
+            else:
+                appointments = [
+                    appointment
+                    for appointment in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
+                    if not getattr(appointment, "doctor_assignment_pending", False)
+                ]
 
         elif role == "patient":
             patient = await ProfileRepository.get_patient_by_user_id(user_id)
@@ -229,21 +351,100 @@ class AppointmentService:
             if not patient:
                 return []
 
-            appointments = await AppointmentRepository.list_by_patient_id(str(patient.id))
+            appointments = (
+                await AppointmentRepository.list_page_by_patient_id(str(patient.id), page)
+                if page is not None else await AppointmentRepository.list_by_patient_id(str(patient.id))
+            )
 
         else:
             appointments = []
 
-        result = []
-
-        for appointment in appointments:
-            result.append(await AppointmentService._format_appointment(appointment))
-
-        return result
+        if page is not None:
+            return await AppointmentService._format_appointment_page(appointments)
+        return [await AppointmentService._format_appointment(item) for item in appointments]
 
     @staticmethod
-    async def list_reception_schedule() -> List[ReceptionAppointmentOut]:
-        appointments = await AppointmentRepository.list_operational_schedule()
+    async def get_patient_appointment(appointment_id: str, user_id: str) -> AppointmentOut:
+        patient = await ProfileRepository.get_patient_by_user_id(user_id)
+        appointment = await AppointmentRepository.get_by_id(appointment_id)
+        if not patient or not appointment or str(appointment.patient_id) != str(patient.id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Appointment not found",
+            )
+        return await AppointmentService._format_appointment(appointment)
+
+    @staticmethod
+    async def list_patient_home_visits(user_id: str, page: PageWindow) -> List[AppointmentOut]:
+        patient = await ProfileRepository.get_patient_by_user_id(user_id)
+        if not patient:
+            return []
+        appointments = await AppointmentRepository.list_page_by_patient_id(
+            str(patient.id), page, "home_visit",
+        )
+        return await AppointmentService._format_appointment_page(appointments)
+
+    @staticmethod
+    async def list_admin_billing(
+        page: PageWindow, billing_status: str | None = None,
+        start_date=None, end_date=None,
+    ) -> List[AppointmentOut]:
+        appointments = await AppointmentRepository.list_page_billing(
+            page, billing_status, start_date, end_date,
+        )
+        return await AppointmentService._format_appointment_page(appointments)
+
+    @staticmethod
+    async def list_patient_appointment_history(
+        user_id: str, status_group: str, page: PageWindow, future_only: bool = False,
+    ) -> List[AppointmentOut]:
+        patient = await ProfileRepository.get_patient_by_user_id(user_id)
+        if not patient:
+            return []
+        groups = {
+            "upcoming": ["scheduled", "in_progress"],
+            "completed": ["completed"],
+            "cancelled": ["cancelled"],
+        }
+        if future_only:
+            appointments = await AppointmentRepository.list_page_by_patient_status(
+                str(patient.id), groups[status_group], page,
+                ascending=status_group == "upcoming", future_only=True,
+            )
+        else:
+            appointments = await AppointmentRepository.list_page_by_patient_status(
+                str(patient.id), groups[status_group], page, ascending=status_group == "upcoming",
+            )
+        return await AppointmentService._format_appointment_page(appointments)
+
+    @staticmethod
+    async def list_reception_schedule(
+        page: PageWindow | None = None,
+        start_date: date | None = None, end_date: date | None = None,
+    ) -> List[ReceptionAppointmentOut]:
+        appointments = (
+            await AppointmentRepository.list_page_operational_schedule(page, start_date, end_date)
+            if page is not None else await AppointmentRepository.list_operational_schedule()
+        )
+        if page is not None and appointments:
+            patients, doctors, users = await AppointmentService._page_profile_maps(
+                appointments,
+                include_patient_phone=True,
+                include_patient_email=True,
+            )
+            result = []
+            for appointment in appointments:
+                patient = patients.get(appointment.patient_id)
+                doctor = doctors.get(appointment.doctor_id)
+                patient_user = users.get(patient.user_id) if patient else None
+                doctor_user = users.get(doctor.user_id) if doctor else None
+                if not all((patient, doctor, patient_user, doctor_user)):
+                    raise HTTPException(status_code=404, detail="Related patient or doctor not found")
+                result.append(await AppointmentService._format_reception_appointment(
+                    appointment, patient=patient, doctor=doctor,
+                    patient_user=patient_user, doctor_user=doctor_user,
+                ))
+            return result
         return [
             await AppointmentService._format_reception_appointment(appointment)
             for appointment in appointments
@@ -311,15 +512,22 @@ class AppointmentService:
                     detail="Cancel the appointment separately from billing changes",
                 )
             if appointment.status == "cancelled":
-                await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+                reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+                if reconciled is True:
+                    appointment = await AppointmentRepository.get_by_id(appointment_id)
                 return await AppointmentService._format_appointment(appointment)
             cancelled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             changed = await AppointmentRepository.cancel_from_status(
-                appointment_id, appointment.status, cancelled_at
+                appointment_id,
+                appointment.status,
+                cancelled_at,
+                expected_revision=schema.expected_revision,
             )
             updated = await AppointmentRepository.get_by_id(appointment_id)
             if changed and updated and updated.status == "cancelled":
-                await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+                reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+                if reconciled is True:
+                    updated = await AppointmentRepository.get_by_id(appointment_id)
                 return await AppointmentService._format_appointment(updated)
             if not updated:
                 raise HTTPException(status_code=404, detail="Appointment not found")
@@ -346,26 +554,42 @@ class AppointmentService:
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Another active appointment already occupies this physiotherapist's slot.",
                     )
-                appointment.slot_claim = active_slot_claim(str(appointment.doctor_id), starts_at)
+                slot_claim = active_slot_claim(str(appointment.doctor_id), starts_at)
             else:
-                appointment.slot_claim = None
-            appointment.status = schema.status
+                slot_claim = None
 
+        set_fields = {}
+        unset_fields = {}
+        if schema.status is not None:
+            set_fields["status"] = schema.status
+            if slot_claim is None:
+                unset_fields["slot_claim"] = ""
+            else:
+                set_fields["slot_claim"] = slot_claim
         if schema.billing_status is not None:
-            appointment.billing_status = schema.billing_status
-
+            set_fields["billing_status"] = schema.billing_status
         if schema.billing_amount is not None:
-            appointment.billing_amount = schema.billing_amount
+            set_fields["billing_amount"] = schema.billing_amount
 
         try:
-            await appointment.save()
+            updated = await AppointmentRepository.update_if_revision(
+                appointment_id,
+                patient_id=appointment.patient_id,
+                doctor_id=appointment.doctor_id,
+                expected_revision=schema.expected_revision,
+                set_fields=set_fields,
+                unset_fields=unset_fields,
+            )
         except DuplicateKeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Another active appointment already occupies this physiotherapist's slot.",
             ) from exc
-
-        updated = await AppointmentRepository.get_by_id(appointment_id)
+        except AppointmentMutationConflict as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The appointment changed. Reload the latest record before trying again.",
+            ) from exc
 
         return await AppointmentService._format_appointment(updated)
 
@@ -394,7 +618,9 @@ class AppointmentService:
                 detail="Appointment not found",
             )
         if appointment.status == "cancelled":
-            await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+            reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+            if reconciled is True:
+                appointment = await AppointmentRepository.get_by_id(appointment_id)
             return await AppointmentService._format_appointment(appointment)
         if appointment.status != "scheduled":
             raise HTTPException(
@@ -431,7 +657,9 @@ class AppointmentService:
         )
         updated = await AppointmentRepository.get_by_id(appointment_id)
         if changed or (updated and updated.status == "cancelled"):
-            await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+            reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+            if reconciled is True:
+                updated = await AppointmentRepository.get_by_id(appointment_id)
             return await AppointmentService._format_appointment(updated)
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
@@ -449,7 +677,9 @@ class AppointmentService:
         if not appointment:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
         if appointment.status == "cancelled":
-            await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+            reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(appointment)
+            if reconciled is True:
+                appointment = await AppointmentRepository.get_by_id(appointment_id)
             return await AppointmentService._format_reception_appointment(appointment)
         if appointment.status != "scheduled":
             raise HTTPException(
@@ -482,7 +712,9 @@ class AppointmentService:
         )
         updated = await AppointmentRepository.get_by_id(appointment_id)
         if changed or (updated and updated.status == "cancelled"):
-            await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+            reconciled = await AppointmentService._mark_cancelled_capture_for_reconciliation(updated)
+            if reconciled is True:
+                updated = await AppointmentRepository.get_by_id(appointment_id)
             return await AppointmentService._format_reception_appointment(updated)
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment not found")
@@ -492,24 +724,25 @@ class AppointmentService:
         )
 
     @staticmethod
-    async def _mark_cancelled_capture_for_reconciliation(appointment: Appointment) -> None:
+    async def _mark_cancelled_capture_for_reconciliation(appointment: Appointment) -> bool:
         """Carry a previously verified provider capture onto the cancelled booking."""
         if (
             not appointment
             or appointment.status != "cancelled"
             or not getattr(appointment, "payment_order_id", None)
         ):
-            return
+            return False
         attempt = await PaymentAttempt.find_one(
             {"appointment_id": appointment.id, "status": "success"}
         )
         if attempt and attempt.provider_order_id and attempt.provider_payment_id:
-            await AppointmentRepository.mark_cancelled_capture_for_reconciliation(
+            return await AppointmentRepository.mark_cancelled_capture_for_reconciliation(
                 str(appointment.id),
                 attempt.provider_order_id,
                 attempt.provider_payment_id,
                 attempt.currency,
             )
+        return False
 
     @staticmethod
     def _status_cancellation_message(appointment_status: str) -> str:
@@ -524,10 +757,12 @@ class AppointmentService:
         )
 
     @staticmethod
-    async def _format_appointment(a: Appointment) -> AppointmentOut:
+    async def _format_appointment(
+        a: Appointment, *, patient=None, doctor=None, patient_user=None, doctor_user=None,
+    ) -> AppointmentOut:
 
-        patient = await ProfileRepository.get_patient_by_id(str(a.patient_id))
-        doctor = await ProfileRepository.get_doctor_by_id(str(a.doctor_id))
+        patient = patient if patient is not None else await ProfileRepository.get_patient_by_id(str(a.patient_id))
+        doctor = doctor if doctor is not None else await ProfileRepository.get_doctor_by_id(str(a.doctor_id))
 
         if not patient or not doctor:
             raise HTTPException(
@@ -535,8 +770,8 @@ class AppointmentService:
                 detail="Related patient or doctor not found",
             )
 
-        patient_user = await UserRepository.get_by_id(str(patient.user_id))
-        doctor_user = await UserRepository.get_by_id(str(doctor.user_id))
+        patient_user = patient_user if patient_user is not None else await UserRepository.get_by_id(str(patient.user_id))
+        doctor_user = doctor_user if doctor_user is not None else await UserRepository.get_by_id(str(doctor.user_id))
 
         if not patient_user or not doctor_user:
             raise HTTPException(
@@ -593,6 +828,7 @@ class AppointmentService:
             payment_order_id=getattr(a, "payment_order_id", None),
             payment_id=getattr(a, "payment_id", None),
             cancelled_at=a.cancelled_at,
+            revision=getattr(a, "revision", 0),
             can_patient_cancel=can_patient_cancel,
             cancellation_deadline=cancellation_deadline,
             cancellation_message=cancellation_message,
@@ -600,16 +836,18 @@ class AppointmentService:
         )
 
     @staticmethod
-    async def _format_reception_appointment(a: Appointment) -> ReceptionAppointmentOut:
-        patient = await ProfileRepository.get_patient_by_id(str(a.patient_id))
-        doctor = await ProfileRepository.get_doctor_by_id(str(a.doctor_id))
+    async def _format_reception_appointment(
+        a: Appointment, *, patient=None, doctor=None, patient_user=None, doctor_user=None,
+    ) -> ReceptionAppointmentOut:
+        patient = patient if patient is not None else await ProfileRepository.get_patient_by_id(str(a.patient_id))
+        doctor = doctor if doctor is not None else await ProfileRepository.get_doctor_by_id(str(a.doctor_id))
         if not patient or not doctor:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Related patient or doctor not found",
             )
-        patient_user = await UserRepository.get_by_id(str(patient.user_id))
-        doctor_user = await UserRepository.get_by_id(str(doctor.user_id))
+        patient_user = patient_user if patient_user is not None else await UserRepository.get_by_id(str(patient.user_id))
+        doctor_user = doctor_user if doctor_user is not None else await UserRepository.get_by_id(str(doctor.user_id))
         if not patient_user or not doctor_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

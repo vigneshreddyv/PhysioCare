@@ -29,9 +29,18 @@ class AdminDemoEntitlementOut(DemoEntitlementOut):
     patient_phone: str | None = None
 
 
+class AdminHomeVisitBookingOut(BaseModel):
+    id: str
+    patient_name: str
+    doctor_id: str
+    doctor_assignment_pending: bool
+    appointment_date: datetime
+    time_slot: str
+
+
 class HomeVisitRequestCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    preferred_doctor_id: str
+    preferred_doctor_id: str = Field(min_length=1, max_length=128)
     home_address: str = Field(min_length=10, max_length=500)
     reason: str = Field(min_length=5, max_length=1000)
     city: str = Field(min_length=2, max_length=100)
@@ -64,10 +73,10 @@ class HomeVisitRequestCreate(BaseModel):
 
 
 class HomeVisitBookingCreate(HomeVisitRequestCreate):
-    preferred_doctor_id: str | None = None
+    preferred_doctor_id: str | None = Field(default=None, min_length=1, max_length=128)
     reason: str | None = Field(default="", max_length=1000)
     appointment_date: date
-    time_slot: str
+    time_slot: str = Field(min_length=1, max_length=20)
     submission_key: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")
 
     @field_validator("appointment_date", mode="before")
@@ -90,7 +99,7 @@ class HomeVisitBookingCreate(HomeVisitRequestCreate):
 
 class HomeVisitDoctorAssignment(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    doctor_id: str
+    doctor_id: str = Field(min_length=1, max_length=128)
 
 
 class HomeVisitContextOut(BaseModel):

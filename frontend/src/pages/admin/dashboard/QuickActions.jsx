@@ -7,9 +7,9 @@ export default function QuickActions() {
 
   return (
     <div>
-      <Button variant="primary" className="w-full justify-start" data-tooltip="Register a new patient to the system" onClick={() => navigate('/admin/patients-create')}>
-        <span className="material-symbols-outlined mr-2">person_add</span>
-        Register New Patient
+      <Button variant="primary" className="w-full justify-start" data-tooltip="View the patient directory" onClick={() => navigate('/admin/patients')}>
+        <span className="material-symbols-outlined mr-2">group</span>
+        View Patient Directory
       </Button>
       <Button variant="outline" className="w-full justify-start" data-tooltip="Schedule a new appointment for a patient" onClick={() => navigate('/admin/appointment-booking')}>
         <span className="material-symbols-outlined mr-2">calendar_today</span>

@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import api from '../../services/api';
 import Button from '../../components/common/Button';
-import ErrorState from '../../components/common/ErrorState';
+import ClinicalEntityPicker from './ClinicalEntityPicker';
 
 const initialForm = {
   patient_id: '',
@@ -21,16 +21,7 @@ export default function ReportAuthoring() {
   const [form, setForm] = useState(initialForm);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-
-  const patients = useQuery({
-    queryKey: ['patients', 'report-authoring'],
-    queryFn: async () => (await api.get('/users/patients')).data,
-  });
-
-  const selectedPatient = useMemo(
-    () => patients.data?.find((patient) => patient.id === form.patient_id),
-    [form.patient_id, patients.data],
-  );
+  const [selectedPatient, setSelectedPatient] = useState(null);
 
   const createReport = useMutation({
     mutationFn: async () => {
@@ -81,9 +72,6 @@ export default function ReportAuthoring() {
     createReport.mutate();
   };
 
-  if (patients.isLoading) return <p role="status">Loading patients…</p>;
-  if (patients.error) return <ErrorState message="Could not load authorized patients." onRetry={() => patients.refetch()} />;
-
   return (
     <div className="portal-page animate-fade-in">
       <header className="portal-hero">
@@ -97,11 +85,13 @@ export default function ReportAuthoring() {
         {successMessage && <p className="portal-trust-note" role="status">{successMessage}</p>}
 
         <div className="grid gap-2">
-          <label htmlFor="report-patient" className="font-semibold">Patient</label>
-          <select id="report-patient" value={form.patient_id} onChange={updateField('patient_id')} required className="min-h-11 rounded-xl border border-outline-variant bg-surface px-3">
-            <option value="">Select an authorized patient</option>
-            {patients.data?.map((patient) => <option key={patient.id} value={patient.id}>{patient.full_name}</option>)}
-          </select>
+          <ClinicalEntityPicker path="/users/patients" label="Patient" selected={selectedPatient}
+            describe={(patient) => patient.full_name}
+            onSelect={(patient) => {
+              setSelectedPatient(patient);
+              setForm((current) => ({ ...current, patient_id: patient?.id || '' }));
+              setSuccessMessage(''); setErrorMessage('');
+            }} />
           {selectedPatient && <p className="text-sm text-on-surface-variant">Report will be attached to {selectedPatient.full_name}.</p>}
         </div>
 

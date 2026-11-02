@@ -1,13 +1,17 @@
 import re
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import HTTPException, UploadFile, status
 from starlette.datastructures import Headers
 
 from app.core.config import settings
+from app.core.pagination import PageWindow
 from app.core.lab_demo import LAB_DEMO_REHEARSAL_TAG
 from app.models.lab_request import LabRequest
+from app.models.patient import Patient
+from app.models.user import User
 from app.repositories.lab_request_repository import LabRequestRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
@@ -63,15 +67,31 @@ class LabRequestService:
         return await LabRequestService._format(request)
 
     @staticmethod
-    async def list_own(user_id: str) -> list[LabRequestOut]:
+    async def list_own(
+        user_id: str, page: PageWindow | None = None, recent_updates: bool = False,
+    ) -> list[LabRequestOut]:
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
         if not patient:
             return []
-        return [await LabRequestService._format(item) for item in await LabRequestRepository.list_for_patient(str(patient.id))]
+        requests = (
+            await LabRequestRepository.list_page_for_patient(
+                str(patient.id), page, recent_updates=recent_updates,
+            ) if recent_updates else await LabRequestRepository.list_page_for_patient(str(patient.id), page)
+            if page is not None else await LabRequestRepository.list_for_patient(str(patient.id))
+        )
+        if page is not None:
+            return await LabRequestService._format_page(requests)
+        return [await LabRequestService._format(item) for item in requests]
 
     @staticmethod
-    async def list_admin() -> list[LabRequestOut]:
-        return [await LabRequestService._format(item) for item in await LabRequestRepository.list_all()]
+    async def list_admin(page: PageWindow | None = None) -> list[LabRequestOut]:
+        requests = (
+            await LabRequestRepository.list_page_all(page)
+            if page is not None else await LabRequestRepository.list_all()
+        )
+        if page is not None:
+            return await LabRequestService._format_page(requests)
+        return [await LabRequestService._format(item) for item in requests]
 
     @staticmethod
     async def assign_laboratorian(request_id: str, laboratorian_id: str, admin_id: str) -> LabRequestOut:
@@ -91,11 +111,28 @@ class LabRequestService:
         return await LabRequestService._format(await LabRequestRepository.get(request_id))
 
     @staticmethod
-    async def list_assigned(user_id: str) -> list[LaboratorianLabRequestOut]:
-        return [
-            await LabRequestService._format_for_laboratorian(item)
-            for item in await LabRequestRepository.list_for_laboratorian(user_id)
-        ]
+    async def list_assigned(
+        user_id: str, page: PageWindow | None = None,
+    ) -> list[LaboratorianLabRequestOut]:
+        requests = (
+            await LabRequestRepository.list_page_for_laboratorian(user_id, page)
+            if page is not None else await LabRequestRepository.list_for_laboratorian(user_id)
+        )
+        if page is not None:
+            patients, patient_users, _assigned_users = await LabRequestService._page_identity_maps(
+                requests, include_patient_email=False, include_assignee=False,
+            )
+            result = []
+            for request in requests:
+                patient = patients.get(request.patient_id)
+                patient_user = patient_users.get(patient.user_id) if patient else None
+                if not patient or not patient_user:
+                    raise HTTPException(status_code=404, detail="Related patient account not found")
+                result.append(await LabRequestService._format_for_laboratorian(
+                    request, patient=patient, patient_user=patient_user,
+                ))
+            return result
+        return [await LabRequestService._format_for_laboratorian(item) for item in requests]
 
     @staticmethod
     async def upload_finalized_report(
@@ -187,25 +224,53 @@ class LabRequestService:
         return await LabRequestService._format(await LabRequestRepository.get(request_id))
 
     @staticmethod
-    async def list_patient_released_reports(user_id: str) -> list[LabReportOut]:
+    async def list_patient_released_reports(
+        user_id: str, page: PageWindow | None = None,
+    ) -> list[LabReportOut]:
         patient = await ProfileRepository.get_patient_by_user_id(user_id)
         if not patient:
             return []
-        requests = await LabRequestRepository.list_released_for_patients([str(patient.id)])
+        requests = (
+            await LabRequestRepository.list_page_released_for_patients([str(patient.id)], page)
+            if page is not None else await LabRequestRepository.list_released_for_patients([str(patient.id)])
+        )
         return [await LabRequestService._format_report(item) for item in requests]
 
     @staticmethod
-    async def list_doctor_released_reports(user_id: str) -> list[LabReportOut]:
+    async def list_doctor_released_reports(
+        user_id: str, page: PageWindow | None = None,
+    ) -> list[LabReportOut]:
         doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
         if not doctor:
             return []
-        appointments = [
-            item for item in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
-            if not getattr(item, "doctor_assignment_pending", False)
+        if page is not None:
+            requests = await LabRequestRepository.list_page_released_for_doctor(
+                str(doctor.id), page,
+            )
+        else:
+            appointments = [
+                item for item in await AppointmentRepository.list_by_doctor_id(str(doctor.id))
+                if not getattr(item, "doctor_assignment_pending", False)
+            ]
+            patient_ids = list(dict.fromkeys(str(item.patient_id) for item in appointments))
+            requests = await LabRequestRepository.list_released_for_patients(patient_ids)
+        if page is None or not requests:
+            return [await LabRequestService._format_report(item, include_patient_name=True) for item in requests]
+        patient_ids = list({item.patient_id for item in requests})
+        patients = await Patient.get_pymongo_collection().find(
+            {"_id": {"$in": patient_ids}}, {"user_id": 1},
+        ).to_list(length=len(patient_ids))
+        user_ids = list({row["user_id"] for row in patients})
+        users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": user_ids}}, {"full_name": 1},
+        ).to_list(length=len(user_ids)) if user_ids else []
+        patient_users = {row["_id"]: row["user_id"] for row in patients}
+        names = {row["_id"]: row["full_name"] for row in users}
+        return [
+            (await LabRequestService._format_report(item)).model_copy(
+                update={"patient_name": names.get(patient_users.get(item.patient_id))},
+            ) for item in requests
         ]
-        patient_ids = list(dict.fromkeys(str(item.patient_id) for item in appointments))
-        requests = await LabRequestRepository.list_released_for_patients(patient_ids)
-        return [await LabRequestService._format_report(item, include_patient_name=True) for item in requests]
 
     @staticmethod
     async def get_report_file(request_id: str, user_id: str, role: str) -> tuple[Path, str]:
@@ -228,11 +293,8 @@ class LabRequestService:
         elif role == "doctor" and request.report_status == "released":
             doctor = await ProfileRepository.get_doctor_by_user_id(user_id)
             if doctor:
-                appointments = await AppointmentRepository.list_by_doctor_id(str(doctor.id))
-                allowed = any(
-                    str(item.patient_id) == str(request.patient_id)
-                    and not getattr(item, "doctor_assignment_pending", False)
-                    for item in appointments
+                allowed = await AppointmentRepository.has_assigned_patient(
+                    str(doctor.id), str(request.patient_id),
                 )
         if not allowed:
             raise HTTPException(status_code=404, detail="Laboratory report not found")
@@ -286,13 +348,82 @@ class LabRequestService:
         }.get(value, "This is not a confirmed laboratory booking.")
 
     @staticmethod
-    async def _format(request: LabRequest) -> LabRequestOut:
-        patient = await ProfileRepository.get_patient_by_id(str(request.patient_id))
-        user = await UserRepository.get_by_id(str(patient.user_id)) if patient else None
+    async def _page_identity_maps(
+        requests: list,
+        *,
+        include_patient_email: bool,
+        include_assignee: bool,
+    ):
+        """Fetch the minimum identities needed to format one authorized lab page."""
+        if not requests:
+            return {}, {}, {}
+        patient_ids = list({request.patient_id for request in requests})
+        patients = await Patient.get_pymongo_collection().find(
+            {"_id": {"$in": patient_ids}}, {"user_id": 1, "phone": 1},
+        ).to_list(length=len(patient_ids))
+        patient_user_ids = list({row["user_id"] for row in patients})
+        patient_user_projection = {"full_name": 1}
+        if include_patient_email:
+            patient_user_projection["email"] = 1
+        patient_users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": patient_user_ids}}, patient_user_projection,
+        ).to_list(length=len(patient_user_ids)) if patient_user_ids else []
+        assigned_ids = list({
+            request.assigned_laboratorian_user_id
+            for request in requests
+            if include_assignee and request.assigned_laboratorian_user_id
+        })
+        assigned_users = await User.get_pymongo_collection().find(
+            {"_id": {"$in": assigned_ids}}, {"full_name": 1},
+        ).to_list(length=len(assigned_ids)) if assigned_ids else []
+        return (
+            {row["_id"]: SimpleNamespace(
+                id=row["_id"], user_id=row["user_id"], phone=row.get("phone"),
+            ) for row in patients},
+            {row["_id"]: SimpleNamespace(
+                id=row["_id"], full_name=row["full_name"], email=row.get("email"),
+            ) for row in patient_users},
+            {row["_id"]: SimpleNamespace(id=row["_id"], full_name=row["full_name"])
+             for row in assigned_users},
+        )
+
+    @staticmethod
+    async def _format_page(requests: list) -> list[LabRequestOut]:
+        if not requests:
+            return []
+        patients, patient_users, assigned_users = await LabRequestService._page_identity_maps(
+            requests, include_patient_email=True, include_assignee=True,
+        )
+        result = []
+        for request in requests:
+            patient = patients.get(request.patient_id)
+            patient_user = patient_users.get(patient.user_id) if patient else None
+            if not patient or not patient_user:
+                raise HTTPException(status_code=404, detail="Related patient account not found")
+            assigned_user = assigned_users.get(request.assigned_laboratorian_user_id)
+            result.append(await LabRequestService._format(
+                request,
+                patient=patient,
+                user=patient_user,
+                assigned_user=assigned_user,
+                assigned_user_loaded=True,
+            ))
+        return result
+
+    @staticmethod
+    async def _format(
+        request: LabRequest,
+        *,
+        patient=None,
+        user=None,
+        assigned_user=None,
+        assigned_user_loaded: bool = False,
+    ) -> LabRequestOut:
+        patient = patient if patient is not None else await ProfileRepository.get_patient_by_id(str(request.patient_id))
+        user = user if user is not None else await UserRepository.get_by_id(str(patient.user_id)) if patient else None
         if not patient or not user:
             raise HTTPException(status_code=404, detail="Related patient account not found")
-        assigned_user = None
-        if request.assigned_laboratorian_user_id:
+        if request.assigned_laboratorian_user_id and not assigned_user_loaded:
             assigned_user = await UserRepository.get_by_id(str(request.assigned_laboratorian_user_id))
         return LabRequestOut(
             id=str(request.id), patient_id=str(patient.id), patient_name=user.full_name,
@@ -309,14 +440,19 @@ class LabRequestService:
         )
 
     @staticmethod
-    async def _format_for_laboratorian(request: LabRequest) -> LaboratorianLabRequestOut:
-        patient = await ProfileRepository.get_patient_by_id(str(request.patient_id))
-        user = await UserRepository.get_by_id(str(patient.user_id)) if patient else None
-        if not patient or not user:
+    async def _format_for_laboratorian(
+        request: LabRequest, *, patient=None, patient_user=None,
+    ) -> LaboratorianLabRequestOut:
+        patient = patient if patient is not None else await ProfileRepository.get_patient_by_id(str(request.patient_id))
+        patient_user = (
+            patient_user if patient_user is not None
+            else await UserRepository.get_by_id(str(patient.user_id)) if patient else None
+        )
+        if not patient or not patient_user:
             raise HTTPException(status_code=404, detail="Related patient account not found")
         return LaboratorianLabRequestOut(
             id=str(request.id),
-            patient_name=user.full_name,
+            patient_name=patient_user.full_name,
             patient_phone=patient.phone,
             mode=request.mode,
             selected_tests=request.selected_tests,

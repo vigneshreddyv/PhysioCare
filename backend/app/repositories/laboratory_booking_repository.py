@@ -4,6 +4,7 @@ from datetime import datetime, time
 from pymongo import ReturnDocument
 
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
+from app.core.pagination import PageWindow
 
 
 class LaboratoryBookingRepository:
@@ -20,6 +21,14 @@ class LaboratoryBookingRepository:
         return await LaboratoryBooking.find(
             LaboratoryBooking.patient_id == PydanticObjectId(patient_id)
         ).sort(-LaboratoryBooking.created_at).to_list()
+
+    @staticmethod
+    async def get_page_by_patient_id(
+        patient_id: str, page: PageWindow,
+    ) -> List[LaboratoryBooking]:
+        return await LaboratoryBooking.find({
+            "patient_id": PydanticObjectId(patient_id),
+        }).sort("-created_at", "-_id").skip(page.offset).limit(page.size).to_list()
 
     @staticmethod
     async def complete_confirmed_for_report(booking_id: str, patient_id: str, *, session=None) -> bool:

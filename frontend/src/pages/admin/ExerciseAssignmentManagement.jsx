@@ -1,3 +1,4 @@
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -5,6 +6,8 @@ import api from '../../services/api';
 import { useAuth } from '../../context/useAuth';
 import Button from '../../components/common/Button';
 import ErrorState from '../../components/common/ErrorState';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import ClinicalEntityPicker from './ClinicalEntityPicker';
 import {
   Dumbbell,
   ClipboardList,
@@ -34,44 +37,29 @@ export default function ExerciseAssignmentManagement() {
   const prefix = role === 'doctor' ? '/doctor' : '/admin';
 
   // 1. Fetch patient profile
-  const { data: patients } = useQuery({
-    queryKey: ['patients'],
-    queryFn: async () => {
-      const response = await api.get('/users/patients');
-      return response.data;
-    }
+  const { data: selectedPatient, error: patientError, refetch: refetchPatient } = useQuery({
+    queryKey: ['exercisePatient', role, patientId],
+    queryFn: async () => (await api.get(role === 'doctor'
+      ? `/users/doctor/patients/${patientId}` : `/users/patients/${patientId}`)).data,
+    gcTime: 0,
   });
-
-  const selectedPatient = useMemo(() => {
-    if (!patients) return null;
-    return patients.find(p => p.id === patientId || p.patient_id === patientId);
-  }, [patients, patientId]);
+  const [plansPage, setPlansPage] = useState(1);
+  const [assignmentsPage, setAssignmentsPage] = useState(1);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [selectedExercise, setSelectedExercise] = useState(null);
 
   // 2. Fetch care plans for patient
   const { data: carePlans, isLoading: isPlansLoading } = useQuery({
-    queryKey: ['patientCarePlans', patientId],
-    queryFn: async () => {
-      const response = await api.get(`/care-plans/patient/${patientId}`);
-      return response.data;
-    }
-  });
-
-  // 3. Fetch exercise catalog
-  const { data: exercises, isLoading: isExercisesLoading } = useQuery({
-    queryKey: ['exercisesCatalog'],
-    queryFn: async () => {
-      const response = await api.get('/exercises');
-      return response.data;
-    }
+    queryKey: ['patientCarePlans', patientId, plansPage],
+    queryFn: async () => (await fetchClinicalPage(`/care-plans/patient/${patientId}`, plansPage)).data,
+    gcTime: 0,
   });
 
   // 4. Fetch existing assignments for patient
   const { data: assignments, isLoading: isAssignmentsLoading, error: assignmentsError, refetch: refetchAssignments } = useQuery({
-    queryKey: ['patientExerciseAssignments', patientId],
-    queryFn: async () => {
-      const response = await api.get(`/exercise-assignments?patient_id=${patientId}`);
-      return response.data;
-    }
+    queryKey: ['patientExerciseAssignments', patientId, assignmentsPage],
+    queryFn: async () => (await fetchClinicalPage(`/exercise-assignments?patient_id=${patientId}&include_labels=true`, assignmentsPage)).data,
+    gcTime: 0,
   });
 
   // Local Form State
@@ -90,6 +78,7 @@ export default function ExerciseAssignmentManagement() {
   const [editDurationMinutes, setEditDurationMinutes] = useState(5);
   const [editFrequency, setEditFrequency] = useState('daily');
   const [editStatus, setEditStatus] = useState('assigned');
+  const [editRevision, setEditRevision] = useState(0);
 
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -97,9 +86,9 @@ export default function ExerciseAssignmentManagement() {
   // Extract available stages of the selected plan
   const selectedPlanStages = useMemo(() => {
     if (!carePlans || !selectedPlanId) return [];
-    const plan = carePlans.find(cp => cp.id === selectedPlanId);
+    const plan = carePlans.find(cp => cp.id === selectedPlanId) || selectedPlan;
     return plan ? plan.stages : [];
-  }, [carePlans, selectedPlanId]);
+  }, [carePlans, selectedPlanId, selectedPlan]);
 
   // Mutations
   const assignExerciseMutation = useMutation({
@@ -111,6 +100,7 @@ export default function ExerciseAssignmentManagement() {
       queryClient.invalidateQueries({ queryKey: ['patientExerciseAssignments', patientId] });
       setSuccessMessage('Exercise prescribed successfully.');
       setSelectedExerciseId('');
+      setSelectedExercise(null);
       setErrorMessage('');
     },
     onError: (err) => {
@@ -130,6 +120,11 @@ export default function ExerciseAssignmentManagement() {
       setErrorMessage('');
     },
     onError: (err) => {
+      if (err.response?.status === 409) {
+        queryClient.invalidateQueries({ queryKey: ['patientExerciseAssignments', patientId] });
+        setErrorMessage('This prescription changed elsewhere. Reload it and review your unsaved inputs before retrying.');
+        return;
+      }
       setErrorMessage(err.response?.data?.detail || 'Failed to update prescription.');
     }
   });
@@ -165,6 +160,7 @@ export default function ExerciseAssignmentManagement() {
     setEditDurationMinutes(Math.round(assign.duration_seconds / 60));
     setEditFrequency(assign.frequency);
     setEditStatus(assign.status);
+    setEditRevision(assign.revision || 0);
     setErrorMessage('');
     setSuccessMessage('');
   };
@@ -179,17 +175,21 @@ export default function ExerciseAssignmentManagement() {
       reps: parseInt(editReps) || 10,
       duration_seconds: (parseInt(editDurationMinutes) || 5) * 60,
       frequency: editFrequency,
-      status: editStatus
+      status: editStatus,
+      expected_revision: editRevision,
     };
 
     updateAssignmentMutation.mutate({ id: editingAssignmentId, payload });
   };
 
+  if (patientError) {
+    return <ErrorState message="Could not load this authorized patient." onRetry={() => refetchPatient()} />;
+  }
   if (assignmentsError) {
     return <ErrorState message="Could not load assignments details." onRetry={() => refetchAssignments()} />;
   }
 
-  const isLoading = isPlansLoading || isExercisesLoading || isAssignmentsLoading;
+  const isLoading = isPlansLoading || isAssignmentsLoading;
 
   return (
     <div className="max-w-[1500px] mx-auto space-y-8 animate-fade-in p-4 sm:p-6 lg:p-8">
@@ -253,14 +253,19 @@ export default function ExerciseAssignmentManagement() {
                     value={selectedPlanId}
                     onChange={e => {
                       setSelectedPlanId(e.target.value);
+                      setSelectedPlan(e.target.value
+                        ? carePlans?.find((plan) => plan.id === e.target.value) || selectedPlan : null);
                       setSelectedStageId('');
                     }}
                   >
                     <option value="">-- Choose Plan --</option>
+                    {selectedPlan && !carePlans?.some((plan) => plan.id === selectedPlan.id) && <option value={selectedPlan.id}>{selectedPlan.title} ({selectedPlan.status})</option>}
                     {carePlans?.map(plan => (
                       <option key={plan.id} value={plan.id}>{plan.title} ({plan.status})</option>
                     ))}
                   </select>
+                  <ClinicalPageNav label="Assignment care plans" page={plansPage} onPageChange={setPlansPage}
+                    isLoading={isPlansLoading} itemCount={carePlans?.length || 0} hasNext={carePlans?.length === 50} />
                 </div>
 
                 <div className="space-y-1.5">
@@ -280,16 +285,9 @@ export default function ExerciseAssignmentManagement() {
 
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#183B4A]">Select Exercise Movement</label>
-                  <select
-                    className="w-full bg-white border border-[#E5E0D6] rounded-xl p-2.5 text-xs text-[#183B4A] focus:ring-4 focus:ring-[#0F6B63]/10 focus:border-[#0F6B63] outline-none"
-                    value={selectedExerciseId}
-                    onChange={e => setSelectedExerciseId(e.target.value)}
-                  >
-                    <option value="">-- Choose Exercise --</option>
-                    {exercises?.filter(ex => ex.active).map(ex => (
-                      <option key={ex.id} value={ex.id}>{ex.title} ({ex.category})</option>
-                    ))}
-                  </select>
+                  <ClinicalEntityPicker path="/exercises?active_only=true" label="Exercise" selected={selectedExercise}
+                    describe={(exercise) => `${exercise.title} (${exercise.category})`}
+                    onSelect={(exercise) => { setSelectedExercise(exercise); setSelectedExerciseId(exercise?.id || ''); }} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 pt-2 border-t border-[#E5E0D6]/35">
@@ -377,19 +375,15 @@ export default function ExerciseAssignmentManagement() {
               ) : (
                 <div className="space-y-4">
                   {assignments.map(assign => {
-                    const exObj = exercises?.find(ex => ex.id === assign.exercise_id);
-                    const cpObj = carePlans?.find(cp => cp.id === assign.care_plan_id);
-                    const stageObj = cpObj?.stages?.find(s => s.stage_id === assign.stage_id);
-
                     const isEditingThis = editingAssignmentId === assign.id;
 
                     return (
                       <div key={assign.id} className="p-4 border border-[#E5E0D6] bg-[#F7F4ED]/10 rounded-2xl space-y-3">
                         <div className="flex justify-between items-start gap-4">
                           <div>
-                            <h4 className="font-extrabold text-sm text-[#183B4A]">{exObj?.title || 'Movement'}</h4>
+                            <h4 className="font-extrabold text-sm text-[#183B4A]">{assign.exercise_title || 'Movement'}</h4>
                             <p className="text-[10px] text-[#60716E] mt-1 font-semibold">
-                              Plan: {cpObj?.title || 'Plan'} | Stage: {stageObj?.title || assign.stage_id}
+                              Plan: {assign.care_plan_title || 'Plan'} | Stage: {assign.stage_title || assign.stage_id}
                             </p>
                           </div>
                           <span className={`px-2.5 py-0.5 rounded text-[8px] font-bold uppercase border shrink-0 ${
@@ -490,6 +484,8 @@ export default function ExerciseAssignmentManagement() {
                   })}
                 </div>
               )}
+              <ClinicalPageNav label="Prescribed routines" page={assignmentsPage} onPageChange={(next) => { setEditingAssignmentId(null); setAssignmentsPage(next); }}
+                isLoading={isAssignmentsLoading} itemCount={assignments?.length || 0} hasNext={assignments?.length === 50} />
             </section>
           </div>
 

@@ -1,11 +1,8 @@
 import React from 'react';
 import { StatCard } from '../../../components/features';
 
-export default function DashboardStats({ stats, appointments }) {
-  const today = new Date().toDateString();
-  const appointmentsToday = (appointments || []).filter(
-    (appointment) => new Date(appointment.appointment_date).toDateString() === today,
-  ).length;
+export default function DashboardStats({ stats, activity }) {
+  const appointmentsToday = activity?.today_appointments ?? 0;
 
   return (
     <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
@@ -44,7 +41,7 @@ export default function DashboardStats({ stats, appointments }) {
       {/* Recorded billing */}
       <StatCard
         title="Recorded Paid Total"
-        value={`$${(stats?.recorded_paid_total ?? 0).toLocaleString()}`}
+        value={`INR ${(stats?.recorded_paid_total ?? 0).toLocaleString('en-IN')}`}
         icon="attach_money"
         changeText="Appointment records only; no payment provider connected"
         changeType="flat"

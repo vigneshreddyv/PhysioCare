@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { sourceWordingReview, treatmentCatalog } from '../../content/physioTreatments';
 import movementHero from '../../assets/physiocare-movement-hero.webp';
 import guidedMobility from '../../assets/physiocare-guided-mobility.webp';
-import api from '../../services/api';
 import Modal from '../../components/common/Modal';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
 
 const categoryIcons = {
   musculoskeletal: 'accessibility_new',
@@ -20,6 +21,7 @@ export default function PublicHome() {
   const [activeCategory, setActiveCategory] = useState(treatmentCatalog[0].id);
   const [query, setQuery] = useState('');
   const [doctorQuery, setDoctorQuery] = useState('');
+  const [doctorPage, setDoctorPage] = useState(1);
   const [selectedDoctor, setSelectedDoctor] = useState(null);
 
   const selectedCategory = treatmentCatalog.find((category) => category.id === activeCategory) || treatmentCatalog[0];
@@ -32,28 +34,18 @@ export default function PublicHome() {
     .filter((group) => group.items.length > 0), [normalizedQuery, selectedCategory]);
   const visibleCount = visibleGroups.reduce((total, group) => total + group.items.length, 0);
   const {
-    data: publicDoctors = [],
+    data: doctorResults,
     isLoading: doctorsLoading,
     isError: doctorsError,
     refetch: refetchDoctors,
   } = useQuery({
-    queryKey: ['publicDoctors'],
-    queryFn: async () => {
-      const response = await api.get('/users/public/doctors');
-      return response.data;
-    },
+    queryKey: ['publicDoctors', doctorQuery.trim(), doctorPage],
+    queryFn: () => fetchClinicalPage(
+      `/users/public/doctors?search=${encodeURIComponent(doctorQuery.trim())}`,
+      doctorPage,
+    ),
   });
-  const normalizedDoctorQuery = doctorQuery.trim().toLowerCase();
-  const visibleDoctors = useMemo(() => publicDoctors.filter((doctor) => (
-    [
-      doctor.full_name,
-      doctor.specialization,
-      doctor.qualifications,
-      ...(doctor.specialties || []),
-    ]
-      .filter(Boolean)
-      .some((value) => value.toLowerCase().includes(normalizedDoctorQuery))
-  )), [normalizedDoctorQuery, publicDoctors]);
+  const publicDoctors = doctorResults?.data || [];
 
   useEffect(() => {
     if (!location.hash) return undefined;
@@ -218,8 +210,6 @@ export default function PublicHome() {
               <span>No appointment or account data has been affected.</span>
               <button type="button" onClick={() => refetchDoctors()}>Try loading profiles again</button>
             </div>
-          ) : publicDoctors.length === 0 ? (
-            <p className="public-physio__directory-state" role="status">No public clinician profiles are available yet.</p>
           ) : (
             <>
               <div className="public-physio__clinician-finder">
@@ -230,16 +220,16 @@ export default function PublicHome() {
                     id="public-clinician-search"
                     type="search"
                     value={doctorQuery}
-                    onChange={(event) => setDoctorQuery(event.target.value)}
+                    onChange={(event) => { setDoctorQuery(event.target.value); setDoctorPage(1); }}
                     placeholder="Search by name, specialty, or focus area"
                     aria-controls="public-clinician-results"
                   />
                 </label>
-                <p role="status" aria-live="polite">{visibleDoctors.length} {visibleDoctors.length === 1 ? 'clinician' : 'clinicians'} shown</p>
+                <p role="status" aria-live="polite">{publicDoctors.length} {publicDoctors.length === 1 ? 'clinician' : 'clinicians'} shown</p>
               </div>
-              {visibleDoctors.length > 0 ? (
+              {publicDoctors.length > 0 ? (
                 <div id="public-clinician-results" className="public-physio__doctor-grid">
-              {visibleDoctors.map((doctor) => {
+              {publicDoctors.map((doctor) => {
                 const initials = doctor.full_name
                   .split(/\s+/)
                   .filter(Boolean)
@@ -271,11 +261,19 @@ export default function PublicHome() {
                 </div>
               ) : (
                 <div id="public-clinician-results" className="public-physio__directory-state" role="status">
-                  <strong>No clinician profiles match “{doctorQuery.trim()}”.</strong>
-                  <span>Try a name, physiotherapy specialty, or another focus area.</span>
-                  <button type="button" onClick={() => setDoctorQuery('')}>Clear search</button>
+                  <strong>{doctorQuery.trim() ? `No clinician profiles match “${doctorQuery.trim()}”.` : doctorPage > 1 ? 'No more clinician profiles are available on this page.' : 'No public clinician profiles are available yet.'}</strong>
+                  {doctorQuery.trim() && <span>Try a name, physiotherapy specialty, or another focus area.</span>}
+                  {doctorQuery.trim() && <button type="button" onClick={() => { setDoctorQuery(''); setDoctorPage(1); }}>Clear search</button>}
                 </div>
               )}
+              <ClinicalPageNav
+                label="Public clinicians"
+                page={doctorPage}
+                onPageChange={setDoctorPage}
+                isLoading={doctorsLoading}
+                itemCount={publicDoctors.length}
+                hasNext={doctorResults?.hasNext}
+              />
             </>
           )}
         </section>

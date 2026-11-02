@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '../../context/useAuth';
 import api from '../../services/api';
 import { closePdfViewer, preparePdfViewer, showPdfBlob } from '../../utils/openPdfBlob';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
 import Skeleton from '../../components/common/Skeleton';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 
 const reportLabels = {
   not_started: 'Not started',
@@ -14,11 +17,22 @@ const reportLabels = {
 };
 
 export default function AdminLabRequestsPanel() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [laboratorianChoices, setLaboratorianChoices] = useState({});
   const [publicationAcknowledgements, setPublicationAcknowledgements] = useState({});
-  const labRequests = useQuery({ queryKey: ['adminLabRequests'], queryFn: async () => (await api.get('/lab-requests/admin')).data });
-  const laboratorians = useQuery({ queryKey: ['laboratorians'], queryFn: async () => (await api.get('/users/laboratorians')).data });
+  const [page, setPage] = useState(1);
+  const [laboratorianPage, setLaboratorianPage] = useState(1);
+  const [laboratorianSearch, setLaboratorianSearch] = useState('');
+  useEffect(() => { setPage(1); setLaboratorianPage(1); setLaboratorianSearch(''); setLaboratorianChoices({}); setPublicationAcknowledgements({}); }, [user?.id]);
+  const labRequests = useQuery({ queryKey: ['adminLabRequests', user?.id, page], queryFn: () => fetchClinicalPage('/lab-requests/admin', page), gcTime: 0 });
+  const visibleRequests = labRequests.data?.data;
+  const laboratorians = useQuery({
+    queryKey: ['laboratorians', laboratorianSearch.trim(), laboratorianPage],
+    queryFn: () => fetchClinicalPage(`/users/laboratorians?search=${encodeURIComponent(laboratorianSearch.trim())}`, laboratorianPage),
+    gcTime: 0,
+  });
+  const visibleLaboratorians = laboratorians.data?.data || [];
   const labReviewMutation = useMutation({
     mutationFn: async ({ requestId, status }) => (await api.patch(`/lab-requests/admin/${requestId}`, { status })).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['adminLabRequests'] }),
@@ -55,8 +69,10 @@ export default function AdminLabRequestsPanel() {
 
   return (
     <section className="portal-section-card" aria-labelledby="admin-lab-requests-heading">
-      <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Laboratory workflow</span><h2 id="admin-lab-requests-heading" className="font-headline-md text-headline-md">Requests and report publication</h2></div><span className="portal-count-pill">{labRequests.data?.length || 0} requests</span></div>
-      {labRequests.isLoading || laboratorians.isLoading ? <Skeleton variant="row" count={3} /> : !labRequests.data?.length ? <div className="p-6"><EmptyState title="No laboratory requests" message="Patient test requests will appear here for review and assignment." icon="biotech" /></div> : <div className="reception-schedule-grid">{labRequests.data.map((request) => {
+      <div className="portal-section-card__header"><div><span className="portal-section__eyebrow">Laboratory workflow</span><h2 id="admin-lab-requests-heading" className="font-headline-md text-headline-md">Requests and report publication</h2></div><span className="portal-count-pill">{visibleRequests?.length || 0} on this page</span></div>
+      <label className="p-4 block">Search laboratory staff <input type="search" value={laboratorianSearch} onChange={(event) => { setLaboratorianSearch(event.target.value); setLaboratorianPage(1); }} /></label>
+      <ClinicalPageNav label="Laboratory staff" page={laboratorianPage} onPageChange={setLaboratorianPage} isLoading={laboratorians.isFetching} itemCount={visibleLaboratorians.length} hasNext={laboratorians.data?.hasNext} />
+      {labRequests.isLoading || laboratorians.isLoading ? <Skeleton variant="row" count={3} /> : !visibleRequests?.length ? <div className="p-6"><EmptyState title="No laboratory requests" message="Patient test requests will appear here for review and assignment." icon="biotech" /></div> : <div className="reception-schedule-grid">{visibleRequests.map((request) => {
         const selectedLaboratorianId = laboratorianChoices[request.id] ?? request.assigned_laboratorian_user_id ?? '';
         const isThisPublication = publishLabReport.isPending && publishLabReport.variables === request.id;
         return <article key={request.id} className="portal-mobile-record">
@@ -66,7 +82,7 @@ export default function AdminLabRequestsPanel() {
           <p>{request.confirmation_message}</p>
           {request.status === 'pending_clinic_confirmation' && <div className="grid grid-cols-1 gap-2 sm:grid-cols-2"><button type="button" disabled={labReviewMutation.isPending} onClick={() => labReviewMutation.mutate({requestId:request.id,status:'approved_for_coordination'})} className="min-h-11 rounded-xl bg-primary px-3 text-on-primary font-semibold disabled:opacity-50">Approve coordination</button><button type="button" disabled={labReviewMutation.isPending} onClick={() => labReviewMutation.mutate({requestId:request.id,status:'declined'})} className="min-h-11 rounded-xl border border-error/30 px-3 text-error font-semibold disabled:opacity-50">Decline</button></div>}
           {request.status === 'approved_for_coordination' && <>
-            <label>Laboratorian<select value={selectedLaboratorianId} onChange={(event) => setLaboratorianChoices((current) => ({ ...current, [request.id]: event.target.value }))}><option value="">Choose a Laboratorian</option>{(laboratorians.data || []).map((item) => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
+            <label>Laboratorian<select value={selectedLaboratorianId} onChange={(event) => setLaboratorianChoices((current) => ({ ...current, [request.id]: event.target.value }))}><option value="">Choose a Laboratorian</option>{selectedLaboratorianId && !visibleLaboratorians.some((item) => item.id === selectedLaboratorianId) && <option value={selectedLaboratorianId}>Previously selected laboratory staff</option>}{visibleLaboratorians.map((item) => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
             {assignLaboratorianMutation.isError && assignLaboratorianMutation.variables?.requestId === request.id && <p className="patient-booking__submit-error" role="alert">{assignLaboratorianMutation.error?.response?.data?.detail || 'The laboratory assignment could not be saved.'}</p>}
             <button type="button" disabled={!selectedLaboratorianId || assignLaboratorianMutation.isPending || request.report_status === 'released'} onClick={() => assignLaboratorianMutation.mutate({ requestId: request.id, laboratorianId: selectedLaboratorianId })} className="min-h-11 rounded-xl bg-primary px-3 text-on-primary font-semibold disabled:opacity-50">{assignLaboratorianMutation.isPending && assignLaboratorianMutation.variables?.requestId === request.id ? 'Saving…' : request.assigned_laboratorian_user_id ? 'Update assignment' : 'Assign Laboratorian'}</button>
             {['awaiting_publication', 'released'].includes(request.report_status) && <button type="button" disabled={openLabReport.isPending} onClick={() => openLabReport.mutate({ request, viewer: preparePdfViewer() })} className="min-h-11 rounded-xl border border-primary/30 px-3 text-primary font-semibold disabled:opacity-50">{openLabReport.isPending && openLabReport.variables?.request?.id === request.id ? 'Opening…' : 'Review finalized PDF'}</button>}
@@ -77,6 +93,7 @@ export default function AdminLabRequestsPanel() {
           </>}
         </article>;
       })}</div>}
+      <ClinicalPageNav label="Admin laboratory requests" page={page} onPageChange={(next) => { setLaboratorianChoices({}); setPublicationAcknowledgements({}); setPage(next); }} isLoading={labRequests.isLoading} itemCount={visibleRequests?.length || 0} />
     </section>
   );
 }

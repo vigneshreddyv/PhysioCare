@@ -75,6 +75,8 @@ class Appointment(Document):
 
     cancelled_at: Optional[datetime] = None
 
+    revision: int = 0
+
     created_at: datetime = Field(default_factory=utc_now)
 
     class Settings:

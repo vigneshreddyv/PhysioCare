@@ -1,16 +1,16 @@
 import logging
 from datetime import datetime, timedelta, time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from beanie import PydanticObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
 
 from app.core.time import utc_now
-from app.models.laboratory_test import LaboratoryTest
 from app.models.laboratory_booking import LaboratoryBooking, EmbeddedTest
 from app.repositories.laboratory_test_repository import LaboratoryTestRepository
 from app.repositories.laboratory_booking_repository import LaboratoryBookingRepository
+from app.core.pagination import PageWindow
 from app.models.user import User
 from app.models.patient import Patient
 from app.services.clinical_authorization import require_doctor_patient_access
@@ -28,8 +28,8 @@ class LaboratoryService:
     DATE_RANGE_DAYS = 14  # Frontend allows next 14 days
 
     @staticmethod
-    async def get_laboratory_tests() -> List[LaboratoryTest]:
-        """Retrieve all active laboratory tests."""
+    async def get_laboratory_tests() -> List[Any]:
+        """Retrieve the bounded active compatibility catalogue."""
         return await LaboratoryTestRepository.get_active_tests()
 
     @staticmethod
@@ -148,10 +148,14 @@ class LaboratoryService:
         return booking
 
     @staticmethod
-    async def get_bookings_by_patient_id(patient_id: str) -> List[LaboratoryBooking]:
+    async def get_bookings_by_patient_id(
+        patient_id: str, page: PageWindow | None = None,
+    ) -> List[LaboratoryBooking]:
         """
         Retrieve all bookings for the specified patient.
         """
+        if page is not None:
+            return await LaboratoryBookingRepository.get_page_by_patient_id(patient_id, page)
         return await LaboratoryBookingRepository.get_by_patient_id(patient_id)
 
     @staticmethod

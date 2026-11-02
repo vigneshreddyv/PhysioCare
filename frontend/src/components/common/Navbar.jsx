@@ -117,8 +117,7 @@ export default function Navbar({ onMenuToggle, menuOpen = false, menuButtonRef }
               <button
                 onClick={async () => {
                   setDropdownOpen(false);
-                  await logout();
-                  navigate('/login', { replace: true });
+                  if (await logout()) navigate('/login', { replace: true });
                 }}
                 className="w-full text-left px-4 py-2 text-sm text-error hover:bg-surface-container-high transition-colors flex items-center gap-2"
                 role="menuitem"

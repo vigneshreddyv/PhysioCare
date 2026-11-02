@@ -1,12 +1,17 @@
-import React from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import api from '../../services/api';
 import AppointmentCard from '../../components/features/AppointmentCard';
 import { CalendarCheck } from '../../components/common/LucideCompat';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 export default function PatientAppointments() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [user?.id]);
 
   // Helper function to parse appointment date and time into a Date object
   const parseAppointmentDateTime = (appointment) => {
@@ -32,17 +37,16 @@ export default function PatientAppointments() {
   };
 
   const {
-    data: appointments = [],
+    data: appointmentsPage,
     isLoading,
     isError,
     refetch,
   } = useQuery({
-    queryKey: ['patient-appointments'],
-    queryFn: async () => {
-      const response = await api.get('/appointments');
-      return response.data;
-    },
+    queryKey: ['patient-appointments', user?.id, page],
+    queryFn: () => fetchClinicalPage('/appointments/me/history?status_group=upcoming&future_only=true', page),
+    gcTime: 0,
   });
+  const appointments = appointmentsPage?.data || [];
 
   // Filter and sort appointments
   const now = new Date();
@@ -120,7 +124,7 @@ export default function PatientAppointments() {
           </div>
 
           <h2 className="mt-4 text-xl font-extrabold text-[#183B4A]">
-            No upcoming appointments
+            No upcoming appointments on this page
           </h2>
 
           <p className="mt-2 text-[#60716E]">
@@ -146,6 +150,7 @@ export default function PatientAppointments() {
           ))}
         </div>
       )}
+      {appointmentsPage && <ClinicalPageNav label="Patient appointments" page={page} onPageChange={setPage} isLoading={isLoading} itemCount={appointments.length} hasNext={appointmentsPage.hasNext} />}
     </div>
   );
 }

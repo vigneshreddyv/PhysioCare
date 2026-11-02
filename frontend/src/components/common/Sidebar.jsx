@@ -130,8 +130,7 @@ export default function Sidebar({ className = '', onNavigate, onClose }) {
         <button
           onClick={async () => {
             onNavigate?.();
-            await logout();
-            navigate('/login', { replace: true });
+            if (await logout()) navigate('/login', { replace: true });
           }}
           className="portal-sidebar__logout w-full flex items-center gap-3 px-4 py-3 transition-colors rounded-xl text-left"
         >

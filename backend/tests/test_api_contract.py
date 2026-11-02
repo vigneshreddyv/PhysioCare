@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from beanie import PydanticObjectId
@@ -12,7 +13,7 @@ from fastapi.routing import APIRoute
 from pydantic import ValidationError
 from pymongo.errors import DuplicateKeyError
 from starlette.requests import Request
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 from app.api.analytics import router as analytics_router
 from app.api.auth import set_session_cookies
@@ -38,6 +39,7 @@ from app.core.appointment_time import (
     validate_demo_slot,
 )
 from app.core.config import Settings, settings
+from app.core.pagination import PageWindow
 from app.core.security import (
     ACCESS_COOKIE_NAME,
     CSRF_COOKIE_NAME,
@@ -53,6 +55,7 @@ from app.models.lab_request import LabRequest
 from app.models.clinician_schedule import ClinicianSchedule, ScheduleBlock, ScheduleDateException
 from app.repositories.demo_service_repository import DemoServiceRepository
 from app.repositories.appointment_repository import AppointmentRepository
+from app.repositories.home_visit_query_repository import HomeVisitQueryRepository
 from app.repositories.lab_request_repository import LabRequestRepository
 from app.repositories.clinician_schedule_repository import ClinicianScheduleRepository
 from app.repositories.profile_repository import ProfileRepository
@@ -98,6 +101,7 @@ from app.services.pdf_malware_scanner import (
 from app.services.doctor_history_service import DoctorHistoryService
 from app.services.clinician_schedule_service import ClinicianScheduleService
 from app.repositories.user_repository import UserRepository
+from app.repositories.account_registration_repository import AccountRegistrationRepository
 
 
 LAB_VALID_PDF = b"%PDF-1.4\nfictional laboratory report\n%%EOF\n"
@@ -370,6 +374,7 @@ def test_laboratorian_uses_shared_authentication_flow(monkeypatch):
         "email": "lab@example.com",
         "role": "laboratorian",
         "hashed_password": "stored-password-hash",
+        "is_active": True,
     })()
     monkeypatch.setattr(UserRepository, "get_by_email", AsyncMock(return_value=user))
     monkeypatch.setattr("app.services.auth_service.verify_password", lambda _password, _hashed: True)
@@ -768,9 +773,12 @@ def test_doctor_patient_history_route_is_doctor_only():
 
 
 def test_patient_directory_keeps_admin_and_doctor_paths_separate(monkeypatch):
-    monkeypatch.setattr(UserService, "list_patients", AsyncMock(return_value=["admin-full-record"]))
-    monkeypatch.setattr(UserService, "list_assigned_patients", AsyncMock(return_value=["doctor-minimum-record"]))
-    monkeypatch.setattr(UserService, "list_reception_patients", AsyncMock(return_value=["reception-contact-record"]))
+    search = AsyncMock(side_effect=[
+        ["admin-full-record"],
+        ["doctor-minimum-record"],
+        ["reception-contact-record"],
+    ])
+    monkeypatch.setattr(UserService, "search_patients", search)
 
     admin = type("UserDouble", (), {"id": "admin-user", "role": "admin"})()
     doctor = type("UserDouble", (), {"id": "doctor-user", "role": "doctor"})()
@@ -778,9 +786,11 @@ def test_patient_directory_keeps_admin_and_doctor_paths_separate(monkeypatch):
     assert asyncio.run(list_patients_api(current_user=admin)) == ["admin-full-record"]
     assert asyncio.run(list_patients_api(current_user=doctor)) == ["doctor-minimum-record"]
     assert asyncio.run(list_reception_patients_api(current_user=object())) == ["reception-contact-record"]
-    UserService.list_patients.assert_awaited_once()
-    UserService.list_assigned_patients.assert_awaited_once_with("doctor-user")
-    UserService.list_reception_patients.assert_awaited_once()
+    assert search.await_args_list == [
+        call("", PageWindow(1, 50), doctor_user_id=None),
+        call("", PageWindow(1, 50), doctor_user_id="doctor-user"),
+        call("", PageWindow(1, 50), reception=True),
+    ]
 
 
 def test_reception_patient_directory_contains_contact_fields_only(monkeypatch):
@@ -853,42 +863,29 @@ def test_reception_contact_update_cannot_change_identity_or_private_fields(monke
 
 
 def test_public_doctor_directory_omits_private_staff_fields(monkeypatch):
-    doctors = [
-        type("DoctorDouble", (), {
-            "id": "doctor-public",
-            "user_id": "doctor-user-public",
-            "specialization": "Sports Physiotherapy",
-            "profile_image": None,
-            "bio": "Fictional public biography",
-            "is_active_today": True,
-        })(),
-        type("DoctorDouble", (), {
-            "id": "doctor-inactive",
-            "user_id": "doctor-user-inactive",
-            "specialization": "Neurological Physiotherapy",
-            "profile_image": None,
-            "bio": None,
-            "is_active_today": False,
-        })(),
-    ]
-    users = {
-        "doctor-user-public": type("UserDouble", (), {
-            "full_name": "Fictional Public Doctor",
-            "email": "private@example.com",
-            "is_active": True,
-        })(),
-        "doctor-user-inactive": type("UserDouble", (), {
-            "full_name": "Inactive Doctor",
-            "email": "inactive@example.com",
-            "is_active": False,
-        })(),
-    }
-    monkeypatch.setattr(ProfileRepository, "list_doctors", AsyncMock(return_value=doctors))
-    monkeypatch.setattr(UserRepository, "get_by_id", AsyncMock(side_effect=lambda user_id: users.get(user_id)))
+    doctor = type("DoctorDouble", (), {
+        "id": "doctor-public",
+        "user_id": "doctor-user-public",
+        "specialization": "Sports Physiotherapy",
+        "profile_image": None,
+        "bio": "Fictional public biography",
+        "is_active_today": True,
+    })()
+    user = type("UserDouble", (), {
+        "full_name": "Fictional Public Doctor",
+        "email": "private@example.com",
+        "is_active": True,
+    })()
+    search = AsyncMock(return_value=[(doctor, user)])
+    monkeypatch.setattr(ProfileRepository, "search_doctors", search)
 
-    result = asyncio.run(UserService.list_public_doctors())
+    result = asyncio.run(UserService.search_public_doctors("", PageWindow(1, 50)))
 
     assert len(result) == 1
+    search.assert_awaited_once_with(
+        "", PageWindow(1, 50), active_only=True,
+        home_visits_only=False, include_email_in_search=False,
+    )
     assert isinstance(result[0], PublicDoctorOut)
     assert set(result[0].model_dump()) == {
         "id", "full_name", "specialization", "profile_image", "bio",
@@ -1332,8 +1329,13 @@ def test_no_preference_booking_reserves_one_real_clinician_atomically(monkeypatc
         appointment.id = PydanticObjectId()
         return appointment
 
+    async def contexts(_appointment_date):
+        yield SimpleNamespace(id=first.id, schedule=None, appointments=[])
+        yield SimpleNamespace(id=second.id, schedule=None, appointments=[])
+
     monkeypatch.setattr(HomeVisitService, "_entitled_patient", AsyncMock(return_value=patient))
-    monkeypatch.setattr(HomeVisitService, "_eligible_home_visit_doctors", AsyncMock(return_value=[first, second]))
+    monkeypatch.setattr(HomeVisitQueryRepository, "iter_clinician_contexts", contexts)
+    monkeypatch.setattr(ClinicianScheduleService, "effective_slots_from_schedule", lambda *_args: (["09:00 AM"], True))
     monkeypatch.setattr(AppointmentRepository, "get_by_submission_claim", AsyncMock(return_value=None))
     monkeypatch.setattr(AppointmentRepository, "create", reserve)
     monkeypatch.setattr("app.services.home_visit_service.Appointment", AppointmentDouble)
@@ -1444,7 +1446,7 @@ def test_doctor_cannot_list_or_update_pending_capacity_reservations(monkeypatch)
     with pytest.raises(HTTPException) as error:
         asyncio.run(AppointmentService.update_appointment(
             "pending",
-            AppointmentUpdate(status="in_progress"),
+            AppointmentUpdate(status="in_progress", expected_revision=0),
             "doctor-user",
             "doctor",
         ))
@@ -1561,6 +1563,23 @@ def test_jwt_configuration_is_required_and_secrets_must_differ(monkeypatch):
         JWT_SECRET="a" * 40,
         JWT_REFRESH_SECRET="b" * 40,
         ENVIRONMENT="production",
+        MONGODB_URL=(
+            "mongodb://synthetic-user:synthetic-password@prod-db.example.invalid:27017/"
+            "physiocare?replicaSet=physiocareProdRs&tls=true"
+        ),
+        DATABASE_NAME="physiocare",
+        PRODUCTION_DATABASE_HOST="prod-db.example.invalid",
+        PRODUCTION_DATABASE_NAME="physiocare",
+        PRODUCTION_STORAGE_ROOT="/var/lib/physiocare-production-synthetic",
+        LAB_REPORT_STORAGE_DIR="/var/lib/physiocare-production-synthetic/lab-reports",
+        LAB_REPORT_QUARANTINE_DIR="/var/lib/physiocare-production-synthetic/lab-quarantine",
+        CLINICAL_REPORT_STORAGE_DIR="/var/lib/physiocare-production-synthetic/clinical-reports",
+        CLINICAL_REPORT_QUARANTINE_DIR="/var/lib/physiocare-production-synthetic/clinical-quarantine",
+        TRUSTED_PROXY_NETWORKS=["192.0.2.0/24"],
+        CORS_ORIGINS=["https://portal.example.invalid"],
+        PDF_SCANNER_MODE="clamav_unix",
+        PDF_SCANNER_SOCKET="/run/clamav/physiocare-clamd.sock",
+        DEMO_HOME_VISIT_REQUESTS_ENABLED=False,
         _env_file=None,
     )
     assert production.cookie_secure is True
@@ -1642,9 +1661,9 @@ def test_sensitive_request_and_auth_debug_logging_is_absent():
         assert "[DIAGNOSTIC]" not in source
 
 
-def test_public_registration_always_creates_patient(monkeypatch):
+def test_public_registration_always_requests_atomic_patient_creation(monkeypatch):
     created_users = []
-    created_patients = []
+    created_roles = []
 
     class ModelDouble:
         def __init__(self, **values):
@@ -1652,23 +1671,19 @@ def test_public_registration_always_creates_patient(monkeypatch):
                 setattr(self, key, value)
 
     async def no_existing_user(_email):
-        return None
+        raise AssertionError("Patient duplicate lookup must stay inside the transaction")
 
-    async def create_user(user):
+    async def create_account(user, *, role, demo_rehearsal_tag):
         user.id = "patient-user-id"
         created_users.append(user)
+        created_roles.append(role)
+        assert demo_rehearsal_tag is None
         return user
 
-    async def create_patient(patient):
-        created_patients.append(patient)
-        return patient
-
     monkeypatch.setattr(UserRepository, "get_by_email", no_existing_user)
-    monkeypatch.setattr(UserRepository, "create", create_user)
-    monkeypatch.setattr(ProfileRepository, "create_patient", create_patient)
+    monkeypatch.setattr(AccountRegistrationRepository, "create_with_profile", create_account)
     monkeypatch.setattr("app.services.auth_service.get_password_hash", lambda _password: "test-hash")
     monkeypatch.setattr("app.services.auth_service.User", ModelDouble)
-    monkeypatch.setattr("app.services.auth_service.Patient", ModelDouble)
 
     result = asyncio.run(
         AuthService.register(
@@ -1683,13 +1698,14 @@ def test_public_registration_always_creates_patient(monkeypatch):
 
     assert result.role == "patient"
     assert created_users[0].role == "patient"
-    assert len(created_patients) == 1
+    assert created_roles == ["patient"]
 
 
 def test_unassigned_doctor_cannot_update_appointment(monkeypatch):
     appointment = type("AppointmentDouble", (), {})()
     appointment.doctor_id = "assigned-doctor"
     appointment.id = "appointment-id"
+    appointment.patient_id = "patient-id"
     appointment.starts_at = datetime(2027, 1, 10, 3, 30)
     appointment.appointment_date = datetime(2027, 1, 10)
     appointment.time_slot = "09:00 AM"
@@ -1706,7 +1722,7 @@ def test_unassigned_doctor_cannot_update_appointment(monkeypatch):
         asyncio.run(
             AppointmentService.update_appointment(
                 "appointment-id",
-                AppointmentUpdate(status="completed"),
+                AppointmentUpdate(status="completed", expected_revision=0),
                 actor_user_id="doctor-user-id",
                 actor_role="doctor",
             )
@@ -1719,6 +1735,7 @@ def test_unassigned_doctor_cannot_update_appointment(monkeypatch):
 def test_assigned_doctor_and_admin_retain_update_access(monkeypatch):
     appointment = type("AppointmentDouble", (), {})()
     appointment.id = "appointment-id"
+    appointment.patient_id = "patient-id"
     appointment.doctor_id = "assigned-doctor"
     appointment.starts_at = datetime(2027, 1, 10, 3, 30)
     appointment.appointment_date = datetime(2027, 1, 10)
@@ -1740,11 +1757,13 @@ def test_assigned_doctor_and_admin_retain_update_access(monkeypatch):
         AsyncMock(return_value="formatted-appointment"),
     )
     monkeypatch.setattr(AppointmentService, "_is_slot_occupied", AsyncMock(return_value=False))
+    update_if_revision = AsyncMock(return_value=appointment)
+    monkeypatch.setattr(AppointmentRepository, "update_if_revision", update_if_revision)
 
     doctor_result = asyncio.run(
         AppointmentService.update_appointment(
             "appointment-id",
-            AppointmentUpdate(status="in_progress"),
+            AppointmentUpdate(status="in_progress", expected_revision=0),
             actor_user_id="doctor-user-id",
             actor_role="doctor",
         )
@@ -1752,7 +1771,7 @@ def test_assigned_doctor_and_admin_retain_update_access(monkeypatch):
     admin_result = asyncio.run(
         AppointmentService.update_appointment(
             "appointment-id",
-            AppointmentUpdate(status="completed"),
+            AppointmentUpdate(status="completed", expected_revision=0),
             actor_user_id="admin-user-id",
             actor_role="admin",
         )
@@ -1760,7 +1779,8 @@ def test_assigned_doctor_and_admin_retain_update_access(monkeypatch):
 
     assert doctor_result == "formatted-appointment"
     assert admin_result == "formatted-appointment"
-    assert appointment.save.await_count == 2
+    assert update_if_revision.await_count == 2
+    appointment.save.assert_not_awaited()
 
 
 def test_doctor_cannot_update_or_receive_billing_fields(monkeypatch):
@@ -1786,7 +1806,7 @@ def test_doctor_cannot_update_or_receive_billing_fields(monkeypatch):
         asyncio.run(
             AppointmentService.update_appointment(
                 "appointment-id",
-                AppointmentUpdate(billing_status="paid", billing_amount=1),
+                AppointmentUpdate(billing_status="paid", billing_amount=1, expected_revision=0),
                 actor_user_id="doctor-user-id",
                 actor_role="doctor",
             )
@@ -1841,13 +1861,6 @@ def test_analytics_uses_recorded_values_without_fabricated_growth(monkeypatch):
         type("DoctorDouble", (), {"specialization": "Sports Physiotherapy"})(),
     ]
 
-    class ListQuery:
-        def __init__(self, values):
-            self.values = values
-
-        async def to_list(self):
-            return self.values
-
     class CountQuery:
         def __init__(self, value):
             self.value = value
@@ -1855,8 +1868,33 @@ def test_analytics_uses_recorded_values_without_fabricated_growth(monkeypatch):
         async def count(self):
             return self.value
 
-    monkeypatch.setattr("app.services.analytics_service.Appointment.find_all", lambda: ListQuery(appointments))
-    monkeypatch.setattr("app.services.analytics_service.Doctor.find_all", lambda: ListQuery(doctors))
+    class AggregateCursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        async def to_list(self, length=None):
+            return self.rows
+
+    class AppointmentCollection:
+        def aggregate(self, pipeline):
+            if "$facet" in pipeline[-1]:
+                start = pipeline[0]["$match"]["appointment_date"]["$gte"]
+                return AggregateCursor([{
+                    "summary": [{"count": 2, "cancelled": 1, "paid": 125.0}],
+                    "weeks": [{"_id": start, "count": 2}],
+                    "statuses": [{"_id": "completed", "count": 1}, {"_id": "cancelled", "count": 1}],
+                }])
+            month = appointments[0].appointment_date.strftime("%Y-%m")
+            return AggregateCursor([{"_id": month, "revenue": 125.0}])
+
+    class DoctorCollection:
+        def aggregate(self, pipeline):
+            return AggregateCursor([{"_id": doctors[0].specialization, "count": 2}])
+
+    monkeypatch.setattr("app.services.analytics_service.Appointment.get_pymongo_collection", lambda: AppointmentCollection())
+    monkeypatch.setattr("app.services.analytics_service.Doctor.get_pymongo_collection", lambda: DoctorCollection())
+    monkeypatch.setattr("app.services.analytics_service.Appointment.find_all", lambda: CountQuery(3))
+    monkeypatch.setattr("app.services.analytics_service.Doctor.find_all", lambda: CountQuery(2))
     monkeypatch.setattr("app.services.analytics_service.User.find", lambda *args: CountQuery(1))
     monkeypatch.setattr("app.services.analytics_service.Patient.find", lambda *args: CountQuery(1))
     monkeypatch.setattr("app.services.analytics_service.Patient.count", AsyncMock(return_value=3))
@@ -2054,6 +2092,9 @@ def test_schedule_publish_blocks_existing_appointment_excluded_by_draft(monkeypa
         asyncio.run(ClinicianScheduleService.publish(str(doctor_id), str(PydanticObjectId()), 3))
     assert error.value.status_code == 409
     assert "existing appointment" in error.value.detail
+    AppointmentRepository.list_active_by_doctor_id.assert_awaited_once_with(
+        str(doctor_id), *booking_window(),
+    )
     ClinicianScheduleRepository.publish.assert_not_awaited()
 
 
@@ -2863,12 +2904,15 @@ def test_unassigned_doctor_cannot_download_published_report(monkeypatch, tmp_pat
     monkeypatch.setattr(settings, "LAB_REPORT_STORAGE_DIR", str(tmp_path))
     monkeypatch.setattr(LabRequestRepository, "get", AsyncMock(return_value=request))
     monkeypatch.setattr(ProfileRepository, "get_doctor_by_user_id", AsyncMock(return_value=doctor))
-    monkeypatch.setattr(AppointmentRepository, "list_by_doctor_id", AsyncMock(return_value=[]))
+    monkeypatch.setattr(AppointmentRepository, "has_assigned_patient", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as error:
         asyncio.run(LabRequestService.get_report_file(str(request.id), "doctor-user", "doctor"))
 
     assert error.value.status_code == 404
+    AppointmentRepository.has_assigned_patient.assert_awaited_once_with(
+        str(doctor.id), str(request.patient_id),
+    )
 
 
 def test_upload_route_rejects_malformed_content_length(monkeypatch):

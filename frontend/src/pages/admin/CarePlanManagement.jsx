@@ -1,10 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../services/api';
 import { useAuth } from '../../context/useAuth';
 import Button from '../../components/common/Button';
 import ErrorState from '../../components/common/ErrorState';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 import {
   ClipboardList,
   Trash2,
@@ -36,18 +38,13 @@ export default function CarePlanManagement() {
   const prefix = role === 'doctor' ? '/doctor' : '/admin';
 
   // 1. Fetch patient profile to identify them in header
-  const { data: patients } = useQuery({
-    queryKey: ['patients'],
-    queryFn: async () => {
-      const response = await api.get('/users/patients');
-      return response.data;
-    }
+  const { data: selectedPatient, error: patientError, refetch: refetchPatient } = useQuery({
+    queryKey: ['carePlanPatient', role, patientId],
+    queryFn: async () => (await api.get(role === 'doctor'
+      ? `/users/doctor/patients/${patientId}` : `/users/patients/${patientId}`)).data,
+    gcTime: 0,
   });
-
-  const selectedPatient = useMemo(() => {
-    if (!patients) return null;
-    return patients.find(p => p.id === patientId || p.patient_id === patientId);
-  }, [patients, patientId]);
+  const [plansPage, setPlansPage] = useState(1);
 
   // 2. Fetch care plans for this patient
   const {
@@ -56,15 +53,14 @@ export default function CarePlanManagement() {
     error: plansError,
     refetch: refetchPlans
   } = useQuery({
-    queryKey: ['patientCarePlans', patientId],
-    queryFn: async () => {
-      const response = await api.get(`/care-plans/patient/${patientId}`);
-      return response.data;
-    }
+    queryKey: ['patientCarePlans', patientId, plansPage],
+    queryFn: async () => (await fetchClinicalPage(`/care-plans/patient/${patientId}`, plansPage)).data,
+    gcTime: 0,
   });
 
   // State for active selected plan to edit (null means "Create New Plan" mode)
   const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [selectedPlanSnapshot, setSelectedPlanSnapshot] = useState(null);
   const [isEditMode, setIsEditMode] = useState(false);
 
   // Form State
@@ -86,14 +82,19 @@ export default function CarePlanManagement() {
   const [successMessage, setSuccessMessage] = useState('');
 
   // Find currently selected care plan object from data list
-  const selectedCarePlan = useMemo(() => {
-    if (!carePlans || !selectedPlanId) return null;
-    return carePlans.find(cp => cp.id === selectedPlanId);
-  }, [carePlans, selectedPlanId]);
+  const selectedCarePlan = carePlans?.find((plan) => plan.id === selectedPlanId) || selectedPlanSnapshot;
+  const mutationError = (err, fallback) => {
+    if (err.response?.status === 409) {
+      queryClient.invalidateQueries({ queryKey: ['patientCarePlans', patientId] });
+      return 'This care plan changed elsewhere. Reload the latest plan and review your unsaved inputs before retrying.';
+    }
+    return err.response?.data?.detail || fallback;
+  };
 
   // Mode Toggles
   const handleStartCreate = () => {
     setSelectedPlanId(null);
+    setSelectedPlanSnapshot(null);
     setIsEditMode(true);
     setFormTitle('');
     setFormDescription('');
@@ -116,6 +117,7 @@ export default function CarePlanManagement() {
   };
 
   const handleStartEdit = (plan) => {
+    setSelectedPlanSnapshot(plan);
     setSelectedPlanId(plan.id);
     setIsEditMode(true);
     setFormTitle(plan.title);
@@ -235,7 +237,10 @@ export default function CarePlanManagement() {
   // React Query Mutations for Clinical Workflow
   const mutateStageStatus = useMutation({
     mutationFn: async ({ stageId, status }) => {
-      const response = await api.patch(`/care-plans/${selectedPlanId}/stages/${stageId}`, { status });
+      const response = await api.patch(`/care-plans/${selectedPlanId}/stages/${stageId}`, {
+        status,
+        expected_revision: selectedCarePlan.revision,
+      });
       return response.data;
     },
     onSuccess: (data) => {
@@ -244,7 +249,7 @@ export default function CarePlanManagement() {
       handleStartEdit(data);
     },
     onError: (err) => {
-      setErrorMessage(err.response?.data?.detail || 'Failed to update stage status.');
+      setErrorMessage(mutationError(err, 'Failed to update stage status.'));
     }
   });
 
@@ -252,7 +257,8 @@ export default function CarePlanManagement() {
     mutationFn: async ({ goalId, progressValue, status }) => {
       const response = await api.patch(`/care-plans/${selectedPlanId}/goals/${goalId}`, {
         progress_value: parseFloat(progressValue) || 0,
-        status
+        status,
+        expected_revision: selectedCarePlan.revision,
       });
       return response.data;
     },
@@ -262,22 +268,25 @@ export default function CarePlanManagement() {
       handleStartEdit(data);
     },
     onError: (err) => {
-      setErrorMessage(err.response?.data?.detail || 'Failed to update goal progress.');
+      setErrorMessage(mutationError(err, 'Failed to update goal progress.'));
     }
   });
 
   const mutatePlanStatus = useMutation({
     mutationFn: async (newStatus) => {
-      const response = await api.patch(`/care-plans/${selectedPlanId}`, { status: newStatus });
+      const response = await api.patch(`/care-plans/${selectedPlanId}`, {
+        status: newStatus,
+        expected_revision: selectedCarePlan.revision,
+      });
       return response.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, newStatus) => {
       queryClient.invalidateQueries({ queryKey: ['patientCarePlans', patientId] });
       setSuccessMessage(`Care Plan status changed to ${newStatus}.`);
       handleStartEdit(data);
     },
     onError: (err) => {
-      setErrorMessage(err.response?.data?.detail || 'Failed to change Care Plan status.');
+      setErrorMessage(mutationError(err, 'Failed to change Care Plan status.'));
     }
   });
 
@@ -307,7 +316,7 @@ export default function CarePlanManagement() {
       setIsEditMode(false);
     },
     onError: (err) => {
-      setErrorMessage(err.response?.data?.detail || 'Failed to update Care Plan.');
+      setErrorMessage(mutationError(err, 'Failed to update Care Plan.'));
     }
   });
 
@@ -340,7 +349,10 @@ export default function CarePlanManagement() {
     };
 
     if (selectedPlanId) {
-      updatePlanMutation.mutate({ id: selectedPlanId, planData: payload });
+      updatePlanMutation.mutate({
+        id: selectedPlanId,
+        planData: { ...payload, expected_revision: selectedCarePlan.revision },
+      });
     } else {
       createPlanMutation.mutate(payload);
     }
@@ -351,6 +363,9 @@ export default function CarePlanManagement() {
     setErrorMessage('');
   };
 
+  if (patientError) {
+    return <ErrorState message="Could not load this authorized patient." onRetry={() => refetchPatient()} />;
+  }
   if (plansError) {
     return <ErrorState message="Could not load Care Plans." onRetry={() => refetchPlans()} />;
   }
@@ -474,6 +489,9 @@ export default function CarePlanManagement() {
               ))}
             </div>
           )}
+          <ClinicalPageNav label="Care plans" page={plansPage} onPageChange={setPlansPage}
+            isLoading={isPlansLoading} itemCount={carePlans?.length || 0}
+            hasNext={carePlans?.length === 50} />
         </div>
       ) : (
         <div className="space-y-8">

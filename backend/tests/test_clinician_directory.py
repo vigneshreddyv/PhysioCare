@@ -4,6 +4,7 @@ import pytest
 from beanie import PydanticObjectId
 
 from app.api.users import list_patients
+from app.core.pagination import PageWindow
 from app.repositories.appointment_repository import AppointmentRepository
 from app.repositories.profile_repository import ProfileRepository
 from app.repositories.user_repository import UserRepository
@@ -60,12 +61,14 @@ async def test_patient_directory_route_uses_authenticated_doctor_identity(monkey
         "id": PydanticObjectId("000000000000000000000000"),
         "role": "doctor",
     })()
-    list_assigned = AsyncMock(return_value=[])
-    monkeypatch.setattr(UserService, "list_assigned_patients", list_assigned)
+    search = AsyncMock(return_value=[])
+    monkeypatch.setattr(UserService, "search_patients", search)
 
     await list_patients(current_user=doctor_user)
 
-    list_assigned.assert_awaited_once_with(str(doctor_user.id))
+    search.assert_awaited_once_with(
+        "", PageWindow(1, 50), doctor_user_id=str(doctor_user.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -74,12 +77,9 @@ async def test_patient_directory_route_keeps_admin_listing_separate(monkeypatch)
         "id": PydanticObjectId("777777777777777777777777"),
         "role": "admin",
     })()
-    list_admin = AsyncMock(return_value=[])
-    list_assigned = AsyncMock(return_value=[])
-    monkeypatch.setattr(UserService, "list_patients", list_admin)
-    monkeypatch.setattr(UserService, "list_assigned_patients", list_assigned)
+    search = AsyncMock(return_value=[])
+    monkeypatch.setattr(UserService, "search_patients", search)
 
     await list_patients(current_user=admin_user)
 
-    list_admin.assert_awaited_once_with()
-    list_assigned.assert_not_awaited()
+    search.assert_awaited_once_with("", PageWindow(1, 50), doctor_user_id=None)

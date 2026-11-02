@@ -38,6 +38,7 @@ class ExerciseAssignment(Document):
     duration_seconds: int
     frequency: str
     status: Literal["assigned", "in_progress", "completed", "cancelled"] = "assigned"
+    revision: int = 0
     assigned_by: PydanticObjectId
     assigned_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

@@ -1,5 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '../../context/useAuth';
 import api from '../../services/api';
 import {
   FileText,
@@ -10,25 +12,26 @@ import {
 } from '../../components/common/LucideCompat';
 import Button from '../../components/common/Button';
 import { Link } from 'react-router-dom';
+import ErrorState from '../../components/common/ErrorState';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 
 export default function PatientReports() {
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
   const [previewReport, setPreviewReport] = useState(null);
+  useEffect(() => { setPage(1); setSearchQuery(''); setPreviewReport(null); }, [user?.id]);
+  const searchTerm = searchQuery.trim();
+  const reportPath = searchTerm ? `/reports?search=${encodeURIComponent(searchTerm)}` : '/reports';
 
   // 1. Fetch real reports from the backend
-  const { data: realReports, isLoading } = useQuery({
-    queryKey: ['reports'],
-    queryFn: async () => {
-      try {
-        const response = await api.get('/reports');
-        return response.data;
-      } catch (err) {
-        console.error("Failed to fetch reports from backend:", err);
-        return [];
-      }
-    },
-    retry: 1
+  const { data: reportPage, isLoading, isError, refetch } = useQuery({
+    queryKey: ['reports', user?.id, searchTerm, page],
+    queryFn: () => fetchClinicalPage(reportPath, page),
+    gcTime: 0,
+    retry: 1,
   });
+  const realReports = reportPage?.data;
 
   // 2. Present only reports returned by the authenticated backend
   const reportsList = useMemo(() => {
@@ -73,13 +76,7 @@ export default function PatientReports() {
     }
   };
 
-  // Search filter
-  const filteredReports = useMemo(() => {
-    return reportsList.filter((rpt) =>
-      rpt.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      rpt.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery, reportsList]);
+  const filteredReports = reportsList;
 
   return (
     <div className="max-w-[1000px] mx-auto space-y-8 animate-fade-in">
@@ -104,7 +101,8 @@ export default function PatientReports() {
         <input
           type="text"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => { setSearchQuery(e.target.value); setPage(1); setPreviewReport(null); }}
+          maxLength={100}
           placeholder="Search reports by title or type (e.g. Assessment)..."
           className="w-full text-sm text-[#183B4A] bg-transparent border-none outline-none placeholder-[#60716E]/70"
         />
@@ -118,6 +116,8 @@ export default function PatientReports() {
             <div className="h-24 bg-gray-100/60 border border-[#E5E0D6]/60 rounded-xl animate-pulse" />
             <div className="h-24 bg-gray-100/60 border border-[#E5E0D6]/60 rounded-xl animate-pulse" />
           </div>
+        ) : isError ? (
+          <ErrorState message="Could not load your reports. Try again." onRetry={() => refetch()} />
         ) : filteredReports.length > 0 ? (
           filteredReports.map((rpt) => (
             <div
@@ -172,6 +172,7 @@ export default function PatientReports() {
           </div>
         )}
       </section>
+      <ClinicalPageNav label="Patient reports" page={page} onPageChange={(next) => { setPreviewReport(null); setPage(next); }} isLoading={isLoading} itemCount={filteredReports.length} hasNext={reportPage?.hasNext} />
 
       {/* SAMPLE PREVIEW MODAL */}
       {previewReport && (

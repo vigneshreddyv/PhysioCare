@@ -20,13 +20,14 @@ from app.core.config import settings
 from app.core.lab_demo import LAB_DEMO_REHEARSAL_TAG
 
 from app.models.user import User
-from app.models.patient import Patient
-from app.models.doctor import Doctor
 from app.models.auth_session import AuthSession
 
 from app.repositories.user_repository import UserRepository
-from app.repositories.profile_repository import ProfileRepository
 from app.repositories.session_repository import SessionRepository
+from app.repositories.account_registration_repository import (
+    AccountRegistrationRepository,
+    DuplicateRegistrationEmail,
+)
 
 from app.schemas.auth import StaffCreate, UserRegister
 
@@ -103,15 +104,15 @@ class AuthService:
         # lookup so public registration does not expose an obvious timing split.
         hashed = get_password_hash(password)
 
-        existing = await UserRepository.get_by_email(email)
-
-        if existing:
-            if not disclose_duplicate:
-                return None
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered",
-            )
+        if role not in {"patient", "doctor"}:
+            existing = await UserRepository.get_by_email(email)
+            if existing:
+                if not disclose_duplicate:
+                    return None
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered",
+                )
         user = User(
             email=email,
             hashed_password=hashed,
@@ -120,8 +121,30 @@ class AuthService:
             demo_rehearsal_tag=demo_rehearsal_tag,
         )
 
+        if role in {"patient", "doctor"}:
+            try:
+                return await AccountRegistrationRepository.create_with_profile(
+                    user,
+                    role=role,
+                    demo_rehearsal_tag=demo_rehearsal_tag,
+                )
+            except DuplicateRegistrationEmail as exc:
+                if not disclose_duplicate:
+                    return None
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered",
+                ) from exc
+            except Exception as exc:
+                # A standalone MongoDB cannot commit this transaction. Do not
+                # fall back to separate writes and risk an orphan account.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Account creation is temporarily unavailable",
+                ) from exc
+
         try:
-            saved_user = await UserRepository.create(user)
+            return await UserRepository.create(user)
         except DuplicateKeyError as exc:
             if not disclose_duplicate:
                 return None
@@ -129,26 +152,6 @@ class AuthService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered",
             ) from exc
-
-        if role == "patient":
-
-            patient = Patient(
-                user_id=saved_user.id,
-                demo_rehearsal_tag=demo_rehearsal_tag,
-            )
-
-            await ProfileRepository.create_patient(patient)
-
-        elif role == "doctor":
-
-            doctor = Doctor(
-                user_id=saved_user.id,
-                specialization="General Physiotherapy",
-            )
-
-            await ProfileRepository.create_doctor(doctor)
-
-        return saved_user
 
     @staticmethod
     async def login(email: str, password: str) -> SessionBundle:
@@ -159,7 +162,7 @@ class AuthService:
             password,
             user.hashed_password if user else _UNKNOWN_ACCOUNT_HASH,
         )
-        if not user or not password_matches:
+        if not user or not password_matches or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",

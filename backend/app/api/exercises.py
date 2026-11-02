@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import List, Optional, Literal
 from app.models.user import User
 from app.middleware.auth import get_current_user, RoleChecker
 from app.schemas.exercise import (
@@ -7,6 +7,7 @@ from app.schemas.exercise import (
     ExerciseCreate,
     ExerciseUpdate,
     ExerciseAssignmentResponse,
+    PatientExerciseAssignmentDetail,
     ExerciseAssignmentCreate,
     ExerciseAssignmentUpdate,
     ExerciseProgressResponse,
@@ -14,6 +15,9 @@ from app.schemas.exercise import (
 )
 from app.services.exercise_service import ExerciseService
 from app.repositories.profile_repository import ProfileRepository
+from app.repositories.exercise_repository import ExerciseRepository
+from app.repositories.exercise_repository import ExerciseAssignmentMutationConflict
+from app.core.pagination import DEFAULT_PAGE_SIZE, page_window
 
 router = APIRouter(tags=["exercises"])
 
@@ -28,11 +32,26 @@ def _scoped_denial(current_user: User, detail: str) -> HTTPException:
 
 @router.get("/exercises", response_model=List[ExerciseResponse])
 async def list_exercises(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    category: Optional[Literal["mobility", "posture", "strength", "stretching"]] = None,
+    search: str | None = Query(default=None, max_length=100),
+    active_only: bool = False,
 ):
     """Retrieve all exercises in the catalog. Active only for patients, all for clinician."""
-    active_only = current_user.role == "patient"
-    exercises = await ExerciseService.list_exercises(active_only=active_only)
+    active_only = current_user.role == "patient" or active_only
+    window = page_window(page, page_size)
+    if search is not None:
+        exercises = await ExerciseService.list_exercises(
+            active_only=active_only, page=window, category=category, search=search.strip(),
+        )
+    elif category:
+        exercises = await ExerciseService.list_exercises(
+            active_only=active_only, page=window, category=category,
+        )
+    else:
+        exercises = await ExerciseService.list_exercises(active_only=active_only, page=window)
     return [
         ExerciseResponse(
             id=str(e.id),
@@ -95,7 +114,10 @@ async def get_exercise(
 @router.get("/exercise-assignments", response_model=List[ExerciseAssignmentResponse])
 async def list_assignments(
     patient_id: Optional[str] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    include_labels: bool = False,
 ):
     """List exercise assignments. Patients can only fetch their own."""
     if current_user.role == "patient":
@@ -125,7 +147,10 @@ async def list_assignments(
                 raise _scoped_denial(current_user, "Patient not found") from None
         target_patient_id = patient_id
 
-    assignments = await ExerciseService.list_assignments_for_patient(target_patient_id)
+    assignments = await ExerciseService.list_assignments_for_patient(
+        target_patient_id, page_window(page, page_size),
+    )
+    exercise_labels, plan_labels = await ExerciseRepository.assignment_labels(assignments) if include_labels else ({}, {})
     return [
         ExerciseAssignmentResponse(
             id=str(a.id),
@@ -138,11 +163,41 @@ async def list_assignments(
             duration_seconds=a.duration_seconds,
             frequency=a.frequency,
             status=a.status,
+            revision=getattr(a, "revision", 0),
             assigned_by=str(a.assigned_by),
             assigned_at=a.assigned_at,
-            updated_at=a.updated_at
+            updated_at=a.updated_at,
+            exercise_title=exercise_labels.get(a.exercise_id),
+            care_plan_title=plan_labels.get(a.care_plan_id, {}).get("title"),
+            stage_title=next((stage.get("title") for stage in plan_labels.get(a.care_plan_id, {}).get("stages", [])
+                              if stage.get("stage_id") == a.stage_id), None),
         ) for a in assignments
     ]
+
+
+@router.get("/exercise-assignments/me/details", response_model=List[PatientExerciseAssignmentDetail])
+async def list_my_assignment_details(
+    current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    category: Optional[Literal["mobility", "posture", "strength", "stretching"]] = None,
+):
+    patient = await ProfileRepository.get_patient_by_user_id(str(current_user.id))
+    if not patient:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient profile not found")
+    rows = await ExerciseRepository.list_patient_assignment_details(
+        str(patient.id), page_window(page, page_size), category,
+    )
+    return [PatientExerciseAssignmentDetail(
+        id=str(row["_id"]), exercise_id=str(row["exercise_id"]),
+        title=row["exercise"]["title"], category=row["exercise"]["category"],
+        description=row["exercise"]["description"],
+        instructions=row["exercise"]["instructions"],
+        safety_precautions=row["exercise"].get("safety_precautions", []),
+        sets=row["sets"], reps=row["reps"], duration_seconds=row["duration_seconds"],
+        status=row["status"],
+        revision=row.get("revision", 0),
+    ) for row in rows]
 
 
 @router.get("/exercise-assignments/{assignment_id}", response_model=ExerciseAssignmentResponse)
@@ -191,6 +246,7 @@ async def get_assignment(
         duration_seconds=assignment.duration_seconds,
         frequency=assignment.frequency,
         status=assignment.status,
+        revision=getattr(assignment, "revision", 0),
         assigned_by=str(assignment.assigned_by),
         assigned_at=assignment.assigned_at,
         updated_at=assignment.updated_at
@@ -220,6 +276,7 @@ async def create_assignment(
             duration_seconds=assignment.duration_seconds,
             frequency=assignment.frequency,
             status=assignment.status,
+            revision=getattr(assignment, "revision", 0),
             assigned_by=str(assignment.assigned_by),
             assigned_at=assignment.assigned_at,
             updated_at=assignment.updated_at
@@ -286,12 +343,18 @@ async def update_assignment(
             duration_seconds=updated.duration_seconds,
             frequency=updated.frequency,
             status=updated.status,
+            revision=getattr(updated, "revision", 0),
             assigned_by=str(updated.assigned_by),
             assigned_at=updated.assigned_at,
             updated_at=updated.updated_at
         )
     except PermissionError:
         raise _scoped_denial(current_user, "Assignment not found") from None
+    except ExerciseAssignmentMutationConflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The exercise assignment changed. Reload the latest record before trying again.",
+        ) from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -334,6 +397,11 @@ async def create_progress(
         )
     except PermissionError:
         raise _scoped_denial(current_user, "Assignment not found") from None
+    except ExerciseAssignmentMutationConflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The exercise assignment changed. Reload the latest record before trying again.",
+        ) from None
 
 
 @router.get("/exercise-progress/stats", response_model=dict)
@@ -372,7 +440,9 @@ async def get_patient_stats_for_clinician(
 
 @router.get("/exercise-progress", response_model=List[ExerciseProgressResponse])
 async def list_patient_progress(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
     """List completion history for the logged-in patient."""
     if current_user.role != "patient":
@@ -386,7 +456,9 @@ async def list_patient_progress(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Patient profile not found"
         )
-    records = await ExerciseService.list_progress_for_patient(str(patient.id))
+    records = await ExerciseService.list_progress_for_patient(
+        str(patient.id), page_window(page, page_size),
+    )
     return [
         ExerciseProgressResponse(
             id=str(r.id),
@@ -409,7 +481,9 @@ async def list_patient_progress(
 @router.get("/exercise-progress/patient/{patient_id}", response_model=List[ExerciseProgressResponse])
 async def list_progress_for_clinician(
     patient_id: str,
-    current_user: User = Depends(RoleChecker(["admin", "doctor"]))
+    current_user: User = Depends(RoleChecker(["admin", "doctor"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
     """List completion history for a patient (Clinicians only)."""
     if current_user.role == "doctor":
@@ -418,7 +492,9 @@ async def list_progress_for_clinician(
             await require_doctor_patient_access(str(current_user.id), patient_id)
         except PermissionError:
             raise _scoped_denial(current_user, "Patient not found") from None
-    records = await ExerciseService.list_progress_for_patient(patient_id)
+    records = await ExerciseService.list_progress_for_patient(
+        patient_id, page_window(page, page_size),
+    )
     return [
         ExerciseProgressResponse(
             id=str(r.id),

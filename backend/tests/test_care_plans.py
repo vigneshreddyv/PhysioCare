@@ -4,7 +4,7 @@ from datetime import timedelta
 from beanie import PydanticObjectId
 from fastapi import HTTPException
 from app.core.time import utc_now
-from app.models.care_plan import CarePlan
+from app.models.care_plan import CarePlan, Goal, Recommendation, Stage
 from app.services.care_plan_service import CarePlanService
 from app.repositories.care_plan_repository import CarePlanRepository
 from app.api.care_plans import get_care_plan_exercises
@@ -28,6 +28,26 @@ def mock_patient_get_globally():
 def mock_notification_create_globally():
     with patch("app.services.notification_service.NotificationService.create_notification", new_callable=AsyncMock) as mock_notif:
         yield mock_notif
+
+
+@pytest.fixture(autouse=True)
+def mock_revision_repositories():
+    async def apply_update(care_plan_id, **kwargs):
+        care_plan = await CarePlanRepository.get_by_id(care_plan_id)
+        for field, value in kwargs["set_fields"].items():
+            if field == "stages":
+                value = [Stage(**item) if isinstance(item, dict) else item for item in value]
+            elif field == "goals":
+                value = [Goal(**item) if isinstance(item, dict) else item for item in value]
+            elif field == "recommendations":
+                value = [Recommendation(**item) if isinstance(item, dict) else item for item in value]
+            setattr(care_plan, field, value)
+        care_plan.revision = kwargs["expected_revision"] + 1
+        return care_plan
+
+    with patch.object(CarePlanRepository, "update_if_revision", side_effect=apply_update) as update, \
+         patch.object(CarePlanRepository, "update_with_side_effects", side_effect=apply_update) as transactional:
+        yield update, transactional
 
 
 
@@ -91,7 +111,7 @@ async def test_create_care_plan_success():
     mock_cp.id = "cp123"
 
     with patch("app.models.patient.Patient.get") as mock_patient_get, \
-         patch("app.services.care_plan_service.CarePlanRepository.create") as mock_cp_create:
+         patch("app.services.care_plan_service.CarePlanRepository.create_with_history") as mock_cp_create:
 
         mock_patient_get.return_value = mock_patient
         mock_cp_create.return_value = mock_cp
@@ -394,7 +414,7 @@ async def test_stage_upcoming_to_active():
 
 
 @pytest.mark.asyncio
-async def test_stage_active_to_completed(mock_notification_create_globally):
+async def test_stage_active_to_completed(mock_notification_create_globally, mock_revision_repositories):
     from app.models.care_plan import Stage
     mock_cp = MagicMock()
     mock_cp.id = PydanticObjectId("000000000000000000000001")
@@ -415,7 +435,8 @@ async def test_stage_active_to_completed(mock_notification_create_globally):
         res = await CarePlanService.update_stage_status("cp123", "st1", "completed", "111111111111111111111111", "admin")
         assert res is not None
         assert stage.status == "completed"
-        mock_notification_create_globally.assert_called_once()
+        assert mock_revision_repositories[1].await_args.kwargs["notification_data"] is not None
+        mock_notification_create_globally.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -500,7 +521,7 @@ async def test_complete_plan_with_unfinished_stages_rejected():
 
 
 @pytest.mark.asyncio
-async def test_complete_plan_success(mock_notification_create_globally):
+async def test_complete_plan_success(mock_notification_create_globally, mock_revision_repositories):
     from app.models.care_plan import Stage
     mock_cp = MagicMock()
     mock_cp.status = "active"
@@ -525,7 +546,8 @@ async def test_complete_plan_success(mock_notification_create_globally):
         )
         assert res is not None
         assert mock_cp.status == "completed"
-        mock_notification_create_globally.assert_called_once()
+        assert mock_revision_repositories[1].await_args.kwargs["notification_data"] is not None
+        mock_notification_create_globally.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -572,7 +594,7 @@ async def test_stage_and_goal_mutations_require_explicit_actor_role():
 
 
 @pytest.mark.asyncio
-async def test_goal_achievement(mock_notification_create_globally):
+async def test_goal_achievement(mock_notification_create_globally, mock_revision_repositories):
     from app.models.care_plan import Goal
     mock_cp = MagicMock()
     mock_cp.id = PydanticObjectId("000000000000000000000001")
@@ -593,7 +615,8 @@ async def test_goal_achievement(mock_notification_create_globally):
         res = await CarePlanService.update_goal_progress("cp123", "g1", 100.0, "achieved", "111111111111111111111111", "admin")
         assert res is not None
         assert goal.status == "achieved"
-        mock_notification_create_globally.assert_called_once()
+        assert mock_revision_repositories[1].await_args.kwargs["notification_data"] is not None
+        mock_notification_create_globally.assert_not_called()
 
 
 @pytest.mark.asyncio

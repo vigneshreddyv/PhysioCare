@@ -1,4 +1,7 @@
 import json
+import ipaddress
+import re
+from difflib import get_close_matches
 from typing import Any, Iterator, Literal
 from urllib.parse import parse_qsl, urlsplit
 
@@ -19,6 +22,33 @@ HOME_VISIT_DEMO_FRONTEND_ORIGIN = "http://127.0.0.1:5176"
 STAGING_INSTANCE_ID = "physiocare-isolated-staging"
 STAGING_DATABASE_ID = "physiocare_staging"
 DEVELOPMENT_DATABASE_NAME = "physiocare_dev"
+
+# The process environment also contains unrelated platform variables. Reserve
+# only PhysioCare-specific setting families and catch close spelling mistakes.
+APPLICATION_ENV_PREFIXES = (
+    "ACCESS_TOKEN_", "API_", "APPOINTMENT_BILLING_", "AUTH_", "BOOKING_",
+    "CLINICAL_REPORT_", "CLINIC_", "CORS_", "DEMO_",
+    "HOME_VISIT_DEMO_", "JWT_", "LAB_DEMO_", "LAB_REPORT_",
+    "MONGODB_", "PAYMENT_RECONCILIATION_", "PDF_", "PHYSIOCARE_",
+    "PRODUCTION_", "RAZORPAY_", "REFRESH_TOKEN_", "STAGING_",
+    "TRUSTED_PROXY_",
+)
+ENV_FILE_SELECTORS = frozenset({"PHYSIOCARE_ENV_FILE", "PHYSIOCARE_HOME_VISIT_ENV_FILE"})
+CONNECTED_TEST_ENV_KEYS = frozenset({
+    "PHYSIOCARE_CONNECTED_MONGO_TEST_URL",
+    "PHYSIOCARE_CONNECTED_MONGO_TEST_DATABASE",
+    "PHYSIOCARE_CONNECTED_MONGO_TEST_ACK",
+    "PHYSIOCARE_PHASE15_TXN_TEST_MODE",
+    "PHYSIOCARE_PHASE15_TXN_TEST_URL",
+    "PHYSIOCARE_PHASE15_TXN_TEST_DATABASE",
+    "PHYSIOCARE_PHASE15_TXN_TEST_ACK",
+    "PHYSIOCARE_PHASE15_TXN_TEST_APPROVED_HOST",
+    "PHYSIOCARE_PHASE15_TXN_TEST_APPROVED_REPLICA_SET",
+    "PHYSIOCARE_PHASE19_REG_TEST_MODE",
+    "PHYSIOCARE_PHASE19_REG_TEST_URL",
+    "PHYSIOCARE_PHASE19_REG_TEST_DATABASE",
+    "PHYSIOCARE_PHASE19_REG_TEST_ACK",
+})
 
 
 # These settings contain credentials or credential material. Keep their
@@ -75,7 +105,7 @@ class Settings(BaseSettings):
     model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",
+        extra="forbid",
         hide_input_in_errors=True,
     )
     
@@ -83,6 +113,7 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "physiocare"
     LAB_DEMO_MODE: bool = False
     HOME_VISIT_DEMO_MODE: bool = False
+    API_DOCUMENTATION_ENABLED: bool | None = None
     JWT_SECRET: str = Field(min_length=32)
     JWT_REFRESH_SECRET: str = Field(min_length=32)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
@@ -97,12 +128,15 @@ class Settings(BaseSettings):
     AUTH_REFRESH_LIMIT: int = Field(default=30, ge=1, le=10000)
     AUTH_REFRESH_WINDOW_SECONDS: int = Field(default=60, ge=1, le=3600)
     TRUSTED_PROXY_NETWORKS: list[str] = []
-    ENVIRONMENT: Literal["development", "test", "staging", "production"] = "development"
+    ENVIRONMENT: Literal["development", "test", "staging", "production"]
     PHYSIOCARE_LOCAL_DEV: bool = False
     STAGING_INSTANCE_ID: str = ""
     STAGING_DATABASE_HOST: str = ""
     STAGING_DATABASE_NAME: str = ""
     STAGING_STORAGE_ROOT: str = ""
+    PRODUCTION_DATABASE_HOST: str = ""
+    PRODUCTION_DATABASE_NAME: str = ""
+    PRODUCTION_STORAGE_ROOT: str = ""
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     CLINIC_TIMEZONE: str = "Asia/Kolkata"
@@ -162,6 +196,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_jwt_secrets(self):
+        self.validate_process_environment_keys()
         if self.JWT_SECRET == self.JWT_REFRESH_SECRET:
             raise ValueError("JWT access and refresh secrets must be different")
         if self.PHYSIOCARE_LOCAL_DEV and self.ENVIRONMENT != "development":
@@ -196,9 +231,10 @@ class Settings(BaseSettings):
                 raise ValueError("ClamAV requires an absolute non-symlinked Unix socket path")
         if self.ENVIRONMENT == "staging":
             self.validate_staging_isolation()
+        if self.ENVIRONMENT == "production":
+            self.validate_production_isolation()
         if not self.CORS_ORIGINS or "*" in self.CORS_ORIGINS:
             raise ValueError("Credentialed CORS requires explicit origins")
-        import ipaddress
         try:
             for network in self.TRUSTED_PROXY_NETWORKS:
                 ipaddress.ip_network(network, strict=False)
@@ -235,12 +271,32 @@ class Settings(BaseSettings):
             raise ValueError("Demo home-service city is required")
         return self
 
+    def validate_process_environment_keys(self) -> None:
+        """Reject likely application typos without treating host variables as settings."""
+        known = set(type(self).model_fields)
+        allowed = known | ENV_FILE_SELECTORS
+        if self.ENVIRONMENT == "test":
+            allowed |= CONNECTED_TEST_ENV_KEYS
+        for name in os.environ:
+            normalized = name.upper()
+            if normalized in allowed:
+                continue
+            if normalized.startswith(APPLICATION_ENV_PREFIXES) or (
+                len(normalized) >= 6
+                and get_close_matches(normalized, known, n=1, cutoff=0.86)
+            ):
+                safe_name = normalized if re.fullmatch(r"[A-Z0-9_]{1,100}", normalized) else "<invalid name>"
+                raise ValueError(f"Unknown PhysioCare process variable: {safe_name}")
+
     def validate_runtime_startup(self) -> None:
         """Recheck environment isolation before any external connection starts."""
+        self.validate_process_environment_keys()
         if self.PHYSIOCARE_LOCAL_DEV and self.ENVIRONMENT != "development":
             raise ValueError("Local development identity cannot select another environment")
         if self.ENVIRONMENT == "staging":
             self.validate_staging_isolation()
+        if self.ENVIRONMENT == "production":
+            self.validate_production_isolation()
         if self.ENVIRONMENT == "development" and not (
             self.LAB_DEMO_MODE or self.HOME_VISIT_DEMO_MODE
         ):
@@ -281,6 +337,8 @@ class Settings(BaseSettings):
 
     def validate_development_isolation(self) -> None:
         """Guard ordinary local development; dedicated demo modes have their own guards."""
+        if not self.PHYSIOCARE_LOCAL_DEV:
+            raise ValueError("Ordinary development requires explicit local identity")
         if os.environ.get("PHYSIOCARE_ENV_FILE") or os.environ.get(
             "PHYSIOCARE_HOME_VISIT_ENV_FILE"
         ):
@@ -416,6 +474,182 @@ class Settings(BaseSettings):
         ):
             raise ValueError("Payments and reconciliation must remain disabled in staging")
 
+    def validate_production_isolation(self) -> None:
+        """Reject unsafe production settings before scanner or database startup."""
+        if self.ENVIRONMENT != "production":
+            raise ValueError("Production requires an explicit production environment")
+        if (
+            self.PHYSIOCARE_LOCAL_DEV
+            or self.LAB_DEMO_MODE
+            or self.HOME_VISIT_DEMO_MODE
+            or self.DEMO_HOME_VISIT_REQUESTS_ENABLED
+            or os.environ.get("PHYSIOCARE_ENV_FILE")
+            or os.environ.get("PHYSIOCARE_HOME_VISIT_ENV_FILE")
+        ):
+            raise ValueError("Production cannot enable local or demo configuration")
+        if not self.AUTH_RATE_LIMIT_ENABLED or not self.TRUSTED_PROXY_NETWORKS:
+            raise ValueError("Production requires throttling and explicit trusted proxies")
+        if any(
+            ipaddress.ip_network(value, strict=False).prefixlen == 0
+            for value in self.TRUSTED_PROXY_NETWORKS
+        ):
+            raise ValueError("Production cannot trust every proxy address")
+        if self.PDF_SCANNER_MODE != "clamav_unix" or not self.PDF_SCANNER_SOCKET:
+            raise ValueError("Production requires a configured private PDF scanner")
+
+        database_name = self.DATABASE_NAME.strip()
+        reserved_names = {
+            DEVELOPMENT_DATABASE_NAME,
+            STAGING_DATABASE_ID,
+            LAB_DEMO_DATABASE_NAME,
+            HOME_VISIT_DEMO_DATABASE_NAME,
+        }
+        if (
+            not database_name
+            or database_name != self.DATABASE_NAME
+            or database_name != self.PRODUCTION_DATABASE_NAME
+            or database_name.casefold() in reserved_names
+            or any(
+                token in {"dev", "development", "demo", "test", "testing", "stage", "staging"}
+                for token in database_name.casefold().replace("-", "_").split("_")
+            )
+        ):
+            raise ValueError("Production requires an explicit dedicated database name")
+
+        try:
+            database_url = urlsplit(self.MONGODB_URL)
+            database_host = database_url.hostname or ""
+            database_port = database_url.port
+        except ValueError:
+            raise ValueError("Production MongoDB URI is invalid") from None
+        if (
+            database_url.scheme not in {"mongodb", "mongodb+srv"}
+            or database_url.fragment
+            or database_url.path != f"/{database_name}"
+            or not database_url.username
+            or not database_url.password
+            or database_url.netloc.count("@") != 1
+            or "," in database_url.netloc.rsplit("@", 1)[-1]
+            or not database_host
+            or database_host.endswith(".")
+            or database_host.casefold() != self.PRODUCTION_DATABASE_HOST.casefold()
+            or (database_url.scheme == "mongodb" and database_port is None)
+            or (database_url.scheme == "mongodb+srv" and database_port is not None)
+        ):
+            raise ValueError("Production requires one approved authenticated MongoDB target")
+        normalized_host = database_host.casefold()
+        try:
+            address = ipaddress.ip_address(normalized_host)
+        except ValueError:
+            host_labels = normalized_host.split(".")
+            if (
+                len(host_labels) < 2
+                or not any(character.isalpha() for character in normalized_host)
+                or any(
+                    not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                    for label in host_labels
+                )
+                or "localhost" in host_labels
+                or normalized_host == self.STAGING_DATABASE_HOST.casefold()
+                or any(
+                    token in {"dev", "development", "demo", "test", "testing", "stage", "staging"}
+                    for token in normalized_host.replace(".", "-").split("-")
+                )
+            ):
+                raise ValueError("Production MongoDB host must be dedicated and non-local") from None
+        else:
+            mapped = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+            if (
+                address.is_loopback or address.is_unspecified
+                or address.is_link_local or address.is_multicast
+                or (mapped is not None and (mapped.is_loopback or mapped.is_unspecified))
+            ):
+                raise ValueError("Production MongoDB host must be dedicated and non-local")
+
+        try:
+            uri_options = parse_qsl(
+                database_url.query,
+                keep_blank_values=True,
+                strict_parsing=True,
+                max_num_fields=64,
+            )
+        except ValueError:
+            raise ValueError("Production MongoDB options are invalid") from None
+        options = {}
+        permitted_tls_options = {
+            "tls", "ssl", "tlscafile", "tlscertificatekeyfile",
+            "tlscertificatekeyfilepassword", "tlscrlfile",
+        }
+        for name, value in uri_options:
+            normalized = name.casefold()
+            if (
+                not normalized
+                or normalized in options
+                or (normalized.startswith(("tls", "ssl")) and normalized not in permitted_tls_options)
+                or normalized in {"ssl_cert_reqs", "ssl_match_hostname"}
+            ):
+                raise ValueError("Production MongoDB options are ambiguous or insecure")
+            options[normalized] = value
+        enabled = [name for name in ("tls", "ssl") if name in options]
+        if len(enabled) != 1 or options[enabled[0]].casefold() != "true":
+            raise ValueError("Production MongoDB requires explicit verified TLS")
+        if database_url.scheme == "mongodb" and not options.get("replicaset"):
+            raise ValueError("Production MongoDB requires an explicit replica set")
+
+        if not self.CORS_ORIGINS:
+            raise ValueError("Production requires explicit HTTPS CORS origins")
+        for origin in self.CORS_ORIGINS:
+            try:
+                parsed_origin = urlsplit(origin)
+                origin_host = parsed_origin.hostname or ""
+            except ValueError:
+                raise ValueError("Production CORS origins must be exact HTTPS origins") from None
+            if (
+                parsed_origin.scheme != "https"
+                or not origin_host
+                or origin_host.casefold() == "localhost"
+                or origin_host.casefold().endswith(".localhost")
+                or parsed_origin.username
+                or parsed_origin.password
+                or parsed_origin.path not in {"", "/"}
+                or parsed_origin.query
+                or parsed_origin.fragment
+            ):
+                raise ValueError("Production CORS origins must be exact HTTPS origins")
+            try:
+                origin_address = ipaddress.ip_address(origin_host)
+            except ValueError:
+                pass
+            else:
+                if origin_address.is_loopback or origin_address.is_unspecified:
+                    raise ValueError("Production CORS origins must be non-local")
+
+        storage_root = Path(self.PRODUCTION_STORAGE_ROOT).expanduser()
+        if not self.PRODUCTION_STORAGE_ROOT or not storage_root.is_absolute() or storage_root.is_symlink():
+            raise ValueError("Production requires an absolute private storage root")
+        resolved_root = storage_root.resolve()
+        configured_roots = []
+        for value in (
+            self.LAB_REPORT_STORAGE_DIR,
+            self.LAB_REPORT_QUARANTINE_DIR,
+            self.CLINICAL_REPORT_STORAGE_DIR,
+            self.CLINICAL_REPORT_QUARANTINE_DIR,
+        ):
+            configured = Path(value).expanduser()
+            if not configured.is_absolute() or configured.is_symlink():
+                raise ValueError("Production report paths must be absolute and non-symlinked")
+            resolved = configured.resolve()
+            if resolved == resolved_root or not resolved.is_relative_to(resolved_root):
+                raise ValueError("Production report paths must stay within the private root")
+            configured_roots.append(resolved)
+        if len(set(configured_roots)) != len(configured_roots):
+            raise ValueError("Production report paths must be separate")
+        if any(
+            candidate != other and candidate.is_relative_to(other)
+            for candidate in configured_roots for other in configured_roots
+        ):
+            raise ValueError("Production report paths must not overlap")
+
     def validate_lab_demo_isolation(self) -> None:
         if not self.LAB_DEMO_MODE:
             return
@@ -484,9 +718,20 @@ class Settings(BaseSettings):
     def cookie_secure(self) -> bool:
         return self.ENVIRONMENT.strip().lower() in {"staging", "production"}
 
-settings = Settings(
-    _env_file=(
-        os.environ.get("PHYSIOCARE_HOME_VISIT_ENV_FILE")
-        or os.environ.get("PHYSIOCARE_ENV_FILE", ".env")
+def load_runtime_settings() -> Settings:
+    process_environment = os.environ.get("ENVIRONMENT")
+    selected_file = (
+        None
+        if process_environment == "production"
+        else (
+            os.environ.get("PHYSIOCARE_HOME_VISIT_ENV_FILE")
+            or os.environ.get("PHYSIOCARE_ENV_FILE", ".env")
+        )
     )
-)
+    configured = Settings(_env_file=selected_file)
+    if configured.ENVIRONMENT == "production" and process_environment != "production":
+        raise ValueError("Production requires process ENVIRONMENT=production")
+    return configured
+
+
+settings = load_runtime_settings()

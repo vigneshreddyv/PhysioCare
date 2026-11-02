@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from app.middleware.auth import RoleChecker
 from app.models.user import User
 from app.core.config import settings
+from app.core.pagination import DEFAULT_PAGE_SIZE, page_window
 from app.schemas.lab_request import (
     LabReportOut,
     LabRequestAssignment,
@@ -33,8 +34,16 @@ async def create_request(
 
 
 @router.get("/me", response_model=list[LabRequestOut])
-async def list_own(current_user: User = Depends(RoleChecker(["patient"]))):
-    return await LabRequestService.list_own(str(current_user.id))
+async def list_own(
+    current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    order: Literal["created", "updated"] = "created",
+):
+    window = page_window(page, page_size)
+    if order == "updated":
+        return await LabRequestService.list_own(str(current_user.id), window, recent_updates=True)
+    return await LabRequestService.list_own(str(current_user.id), window)
 
 
 @router.post("/{request_id}/withdraw", response_model=LabRequestOut)
@@ -43,8 +52,12 @@ async def withdraw(request_id: str, current_user: User = Depends(RoleChecker(["p
 
 
 @router.get("/admin", response_model=list[LabRequestOut])
-async def list_admin(current_user: User = Depends(RoleChecker(["admin"]))):
-    return await LabRequestService.list_admin()
+async def list_admin(
+    current_user: User = Depends(RoleChecker(["admin"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+):
+    return await LabRequestService.list_admin(page_window(page, page_size))
 
 
 @router.patch("/admin/{request_id}", response_model=LabRequestOut)
@@ -76,8 +89,10 @@ async def publish_report(
 @router.get("/laboratory/assigned", response_model=list[LaboratorianLabRequestOut])
 async def list_assigned_orders(
     current_user: User = Depends(RoleChecker(["laboratorian"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await LabRequestService.list_assigned(str(current_user.id))
+    return await LabRequestService.list_assigned(str(current_user.id), page_window(page, page_size))
 
 
 @router.put("/laboratory/{request_id}/report", response_model=LaboratorianLabRequestOut)
@@ -120,15 +135,23 @@ async def upload_finalized_report(
 @router.get("/me/reports", response_model=list[LabReportOut])
 async def list_released_reports(
     current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await LabRequestService.list_patient_released_reports(str(current_user.id))
+    return await LabRequestService.list_patient_released_reports(
+        str(current_user.id), page_window(page, page_size),
+    )
 
 
 @router.get("/doctor/reports", response_model=list[LabReportOut])
 async def list_assigned_patient_reports(
     current_user: User = Depends(RoleChecker(["doctor"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await LabRequestService.list_doctor_released_reports(str(current_user.id))
+    return await LabRequestService.list_doctor_released_reports(
+        str(current_user.id), page_window(page, page_size),
+    )
 
 
 @router.get("/{request_id}/report-file")
@@ -141,4 +164,13 @@ async def download_report(
         str(current_user.id),
         current_user.role,
     )
-    return FileResponse(path, media_type="application/pdf", filename=file_name)
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=file_name,
+        headers={
+            "Cache-Control": "private, no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

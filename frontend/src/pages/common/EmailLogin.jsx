@@ -12,7 +12,7 @@ const loginSchema = z.object({
 });
 
 export default function EmailLogin() {
-  const { login } = useAuth();
+  const { login, retryPendingLogin, pendingLogin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [authError, setAuthError] = useState('');
@@ -30,6 +30,7 @@ export default function EmailLogin() {
   } = useForm({ resolver: zodResolver(loginSchema) });
 
   const onSubmit = async (data) => {
+    if (pendingLogin) return;
     setAuthError('');
     setSubmitting(true);
     try {
@@ -37,6 +38,18 @@ export default function EmailLogin() {
       if (success) navigate(from, { replace: true, state: destinationState });
     } catch (err) {
       setAuthError(typeof err === 'string' ? err : 'Invalid credentials. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const onRetrySessionCheck = async () => {
+    setAuthError('');
+    setSubmitting(true);
+    try {
+      if (await retryPendingLogin()) navigate(from, { replace: true, state: destinationState });
+    } catch (err) {
+      setAuthError(typeof err === 'string' ? err : 'Your account could not be loaded. Retry the session check.');
     } finally {
       setSubmitting(false);
     }
@@ -66,7 +79,16 @@ export default function EmailLogin() {
           {authError && (
             <div className="auth-flow__auth-error" role="alert" aria-live="polite">
               <span className="material-symbols-outlined" aria-hidden="true">error</span>
-              <span><strong>We could not sign you in.</strong>{authError}</span>
+              <span><strong>Sign-in is incomplete. </strong>{authError}</span>
+            </div>
+          )}
+
+          {pendingLogin && (
+            <div role="status">
+              <p>Sign-in is not complete. Check the existing session before submitting your password again.</p>
+              <button type="button" className="auth-flow__primary" disabled={submitting} onClick={onRetrySessionCheck}>
+                {submitting ? 'Checking session…' : 'Retry session check'}
+              </button>
             </div>
           )}
 
@@ -110,7 +132,7 @@ export default function EmailLogin() {
               {errors.password && <p id="login-password-error" className="auth-flow__field-error" role="alert">{errors.password.message}</p>}
             </div>
 
-            <Button variant="patientPrimary" type="submit" className="auth-flow__primary" disabled={submitting}>
+            <Button variant="patientPrimary" type="submit" className="auth-flow__primary" disabled={submitting || Boolean(pendingLogin)}>
               {submitting ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>

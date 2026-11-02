@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../services/api';
+import { CLINICAL_PAGE_SIZE } from '../../services/clinicalPagination';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 import Button from '../../components/common/Button';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorState from '../../components/common/ErrorState';
@@ -21,20 +23,51 @@ function displayDate(value, includeTime = false) {
 export default function AdminPatientHistory() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [page, setPage] = useState(1);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const activePatientRef = useRef(id);
+  const viewerRef = useRef(null);
+  useEffect(() => {
+    activePatientRef.current = id;
+    return () => {
+      activePatientRef.current = null;
+      if (viewerRef.current) closePdfViewer(viewerRef.current);
+      viewerRef.current = null;
+    };
+  }, [id]);
   const history = useQuery({
-    queryKey: ['adminPatientHistory', id],
+    queryKey: ['adminPatientHistory', id, page, startDate, endDate],
     enabled: Boolean(id),
-    queryFn: async () => (await api.get(`/users/patients/${id}/history`)).data,
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const data = (await api.get(`/users/patients/${id}/history`, {
+        params: { page, page_size: CLINICAL_PAGE_SIZE, start_date: startDate || undefined, end_date: endDate || undefined },
+        signal,
+      })).data;
+      if (!data || !Array.isArray(data.appointments) || !Array.isArray(data.reports)
+        || data.appointments.length > CLINICAL_PAGE_SIZE || data.reports.length > CLINICAL_PAGE_SIZE) {
+        throw new Error('Invalid patient history response');
+      }
+      return data;
+    },
   });
   const openReport = useMutation({
-    mutationFn: async ({ report, viewer }) => {
+    mutationFn: async ({ report, viewer, patientIdAtOpen }) => {
       if (!viewer) throw new Error('The PDF viewer was blocked.');
+      viewerRef.current = viewer;
       try {
         const response = await api.get(`/lab-requests/${report.request_id}/report-file`, { responseType: 'blob' });
+        if (activePatientRef.current !== patientIdAtOpen) {
+          closePdfViewer(viewer);
+          return;
+        }
         showPdfBlob(viewer, response.data);
       } catch (error) {
         closePdfViewer(viewer);
         throw error;
+      } finally {
+        if (viewerRef.current === viewer) viewerRef.current = null;
       }
     },
   });
@@ -66,11 +99,15 @@ export default function AdminPatientHistory() {
         </dl>
       </header>
       <section className="doctor-history__summary" aria-label="Patient record summary">
-        <div><strong>{appointments.length}</strong><span>Total visits</span></div>
-        <div><strong>{appointments.filter((item) => item.status === 'completed').length}</strong><span>Completed</span></div>
-        <div><strong>{reports.length}</strong><span>Published reports</span></div>
+        <div><strong>{appointments.length}</strong><span>Visits on this page</span></div>
+        <div><strong>{appointments.filter((item) => item.status === 'completed').length}</strong><span>Completed on this page</span></div>
+        <div><strong>{reports.length}</strong><span>Reports on this page</span></div>
         <div><strong>{audit.length}</strong><span>Profile edits</span></div>
       </section>
+      <div className="flex flex-wrap gap-3" aria-label="History date filters">
+        <label>From <input type="date" value={startDate} onChange={(event) => { setStartDate(event.target.value); setPage(1); }} /></label>
+        <label>Through <input type="date" value={endDate} min={startDate || undefined} onChange={(event) => { setEndDate(event.target.value); setPage(1); }} /></label>
+      </div>
       <section className="portal-section-card doctor-history__section" aria-labelledby="admin-patient-visits-heading">
         <div className="doctor-history__section-head"><div><span className="portal-section__eyebrow">Care timeline</span><h2 id="admin-patient-visits-heading">Appointment history</h2></div><span className="portal-count-pill">{appointments.length} visits</span></div>
         {!appointments.length ? <EmptyState title="No appointment history" message="This patient has no recorded PhysioCare visits." icon="event_note" /> : (
@@ -95,12 +132,15 @@ export default function AdminPatientHistory() {
               <article key={report.request_id} className="doctor-history__report">
                 <span className="doctor-history__report-icon material-symbols-outlined" aria-hidden="true">description</span>
                 <div><strong>{report.report_file_name || 'Laboratory report'}</strong><span>{report.selected_tests.join(', ')}</span><small>{displayDate(report.report_released_at)}</small></div>
-                <button type="button" disabled={openReport.isPending} onClick={() => openReport.mutate({ report, viewer: preparePdfViewer() })}>Open PDF</button>
+                <button type="button" disabled={openReport.isPending} onClick={() => openReport.mutate({ report, viewer: preparePdfViewer(), patientIdAtOpen: id })}>Open PDF</button>
               </article>
             ))}
           </div>
         )}
       </section>
+      <ClinicalPageNav label="Patient history" page={page} onPageChange={setPage}
+        isLoading={history.isFetching} itemCount={appointments.length + reports.length}
+        hasNext={appointments.length === CLINICAL_PAGE_SIZE || reports.length === CLINICAL_PAGE_SIZE} />
       <section className="portal-section-card doctor-history__section" aria-labelledby="admin-patient-audit-heading">
         <div className="doctor-history__section-head"><div><span className="portal-section__eyebrow">Administrative accountability</span><h2 id="admin-patient-audit-heading">Profile edit audit</h2></div><span className="portal-count-pill">Latest {audit.length}</span></div>
         <p className="doctor-history__section-note">The audit stores the administrator identifier, time, and changed field names only. Previous contact or identity values are not duplicated.</p>

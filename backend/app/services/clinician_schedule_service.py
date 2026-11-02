@@ -32,6 +32,14 @@ from app.schemas.clinician_schedule import (
 
 class ClinicianScheduleService:
     @staticmethod
+    def demo_fallback_enabled() -> bool:
+        return settings.ENVIRONMENT == "development" and (
+            settings.PHYSIOCARE_LOCAL_DEV
+            or settings.LAB_DEMO_MODE
+            or settings.HOME_VISIT_DEMO_MODE
+        )
+
+    @staticmethod
     async def _doctor(doctor_id: str):
         doctor = await ProfileRepository.get_doctor_by_id(doctor_id)
         if not doctor:
@@ -119,6 +127,16 @@ class ClinicianScheduleService:
     @staticmethod
     async def effective_slots(doctor_id: str, appointment_date: date, service_mode: str) -> tuple[list[str], bool]:
         schedule = await ClinicianScheduleRepository.get_by_doctor_id(doctor_id)
+        return ClinicianScheduleService.effective_slots_from_schedule(
+            schedule, appointment_date, service_mode,
+        )
+
+    @staticmethod
+    def effective_slots_from_schedule(
+        schedule: ClinicianSchedule | None,
+        appointment_date: date,
+        service_mode: str,
+    ) -> tuple[list[str], bool]:
         if schedule and schedule.published_revision is not None:
             return ClinicianScheduleService._slots_from(
                 schedule.published_weekly_blocks,
@@ -127,17 +145,28 @@ class ClinicianScheduleService:
                 service_mode,
                 schedule.slot_minutes,
             ), True
-        fallback = demo_home_schedule_slots() if service_mode == "home_visit" else demo_schedule_slots()
-        return fallback, False
+        if ClinicianScheduleService.demo_fallback_enabled():
+            fallback = demo_home_schedule_slots() if service_mode == "home_visit" else demo_schedule_slots()
+            return fallback, False
+        return [], False
 
     @staticmethod
-    async def validate_effective_slot(doctor_id: str, appointment_date: date, time_slot: str, service_mode: str) -> tuple[datetime, bool]:
+    def validate_effective_slot_values(
+        appointment_date: date,
+        time_slot: str,
+        slots: list[str],
+        published: bool,
+    ) -> tuple[datetime, bool]:
         try:
             validate_booking_date(appointment_date)
             normalized = parse_time_slot(time_slot).strftime("%I:%M %p")
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
-        slots, published = await ClinicianScheduleService.effective_slots(doctor_id, appointment_date, service_mode)
+        if not published and not ClinicianScheduleService.demo_fallback_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No published clinician schedule is available for this physiotherapist",
+            )
         if normalized not in slots:
             source = "published clinician schedule" if published else "configured demonstration schedule"
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Choose a slot inside the {source}")
@@ -145,6 +174,13 @@ class ClinicianScheduleService:
         if starts_at <= datetime.now(timezone.utc).replace(tzinfo=None):
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Choose a future appointment slot")
         return starts_at, published
+
+    @staticmethod
+    async def validate_effective_slot(doctor_id: str, appointment_date: date, time_slot: str, service_mode: str) -> tuple[datetime, bool]:
+        slots, published = await ClinicianScheduleService.effective_slots(doctor_id, appointment_date, service_mode)
+        return ClinicianScheduleService.validate_effective_slot_values(
+            appointment_date, time_slot, slots, published,
+        )
 
     @staticmethod
     async def preview(doctor_id: str, appointment_date: date, service_mode: str) -> AppointmentAvailabilityOut:
@@ -164,7 +200,9 @@ class ClinicianScheduleService:
             schedule.slot_minutes,
         )
         occupied = set()
-        for appointment in await AppointmentRepository.list_active_by_doctor_id(doctor_id):
+        for appointment in await AppointmentRepository.list_active_by_doctor_id(
+            doctor_id, appointment_date, appointment_date,
+        ):
             try:
                 occupied.add(resolve_appointment_start_utc(appointment).replace(tzinfo=None))
             except ValueError:
@@ -180,7 +218,11 @@ class ClinicianScheduleService:
             appointment_date=appointment_date,
             clinic_timezone=settings.CLINIC_TIMEZONE,
             demo_configuration=True,
-            configuration_label="Draft preview only; patients continue using the last published schedule or the demonstration fallback",
+            configuration_label=(
+                "Draft preview only; patients continue using the last published schedule or the demonstration fallback"
+                if ClinicianScheduleService.demo_fallback_enabled()
+                else "Draft preview only; patients require a published clinician schedule"
+            ),
             slot_minutes=schedule.slot_minutes,
             window_start=slot_values[0] if slot_values else "Closed",
             window_end=slot_values[-1] if slot_values else "Closed",
@@ -198,7 +240,9 @@ class ClinicianScheduleService:
         earliest, latest = booking_window()
         conflicts = 0
         clinic_zone = ZoneInfo(settings.CLINIC_TIMEZONE)
-        for appointment in await AppointmentRepository.list_active_by_doctor_id(doctor_id):
+        for appointment in await AppointmentRepository.list_active_by_doctor_id(
+            doctor_id, earliest, latest,
+        ):
             try:
                 local = resolve_appointment_start_utc(appointment).astimezone(clinic_zone)
             except ValueError:

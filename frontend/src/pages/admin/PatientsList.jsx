@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { MAX_CLINICAL_PAGE, fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/useAuth';
@@ -13,20 +14,34 @@ export default function PatientsList() {
   const isReceptionist = user?.role === 'receptionist';
   const isDoctor = user?.role === 'doctor';
   const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState('1');
   const [editingPatient, setEditingPatient] = useState(null);
   const [contactDraft, setContactDraft] = useState({ full_name: '', phone: '' });
+  const directoryPath = isReceptionist ? '/users/reception/patients' : '/users/patients';
+  useEffect(() => {
+    setPage(1);
+    setPageInput('1');
+    setEditingPatient(null);
+  }, [user?.id, user?.role]);
   const {
-    data: patients,
+    data: patientPage,
     isLoading,
     error,
     refetch
   } = useQuery({
-    queryKey: ['patients', user?.role],
-    queryFn: async () => {
-      const response = await api.get(isReceptionist ? '/users/reception/patients' : '/users/patients');
-      return response.data;
-    }
+    queryKey: ['patients', 'directory', user?.id, user?.role, page],
+    queryFn: () => fetchClinicalPage(directoryPath, page),
+    gcTime: 0,
   });
+  const patients = patientPage?.data;
+
+  const changePage = (next) => {
+    if (!Number.isInteger(next) || next < 1 || next > MAX_CLINICAL_PAGE) return;
+    setEditingPatient(null);
+    setPage(next);
+    setPageInput(String(next));
+  };
 
   const navigate = useNavigate();
   const updateContactMutation = useMutation({
@@ -34,6 +49,7 @@ export default function PatientsList() {
       await api.patch(`/users/reception/patients/${patientId}`, updates)
     ).data,
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['patients', 'directory', user?.id, user?.role] });
       queryClient.invalidateQueries({ queryKey: ['patients', 'receptionist'] });
       setEditingPatient(null);
     },
@@ -54,7 +70,10 @@ export default function PatientsList() {
   };
 
   if (error) {
-    return <ErrorState message="Could not load patient records." onRetry={() => refetch()} />;
+    return <div>
+      <ErrorState message={`Could not load patient directory page ${page}.`} onRetry={() => refetch()} />
+      {page > 1 && <button type="button" className="portal-inline-action" onClick={() => changePage(1)}>Return to first page</button>}
+    </div>;
   }
 
   return (
@@ -132,7 +151,7 @@ export default function PatientsList() {
             <h2 id="patient-records-heading" className="font-headline-md text-headline-md">Registered records</h2>
           </div>
           <span className="portal-count-pill">
-            {patients ? patients.length : 0} patients
+            {patients ? patients.length : 0} on this page
           </span>
         </div>
 
@@ -145,12 +164,12 @@ export default function PatientsList() {
           if (!isNonEmptyPatientArray) {
             return (
               <EmptyState
-                title={isAdmin ? 'No patients registered' : isReceptionist ? 'No patient contacts' : 'No assigned patients'}
+                title={page > 1 ? 'No records on this page' : isAdmin ? 'No patients registered' : isReceptionist ? 'No patient contacts' : 'No assigned patients'}
                 message={isAdmin
-                  ? 'Patient accounts will appear here once they register on the booking portal.'
+                  ? page > 1 ? 'Choose an earlier page to continue browsing.' : 'Patient accounts will appear here once they register on the booking portal.'
                   : isReceptionist
-                    ? 'Patient contact details will appear here after patient registration.'
-                  : 'Patients will appear here only after an appointment is assigned to you.'}
+                    ? page > 1 ? 'Some directory pages may be empty when inactive contacts are filtered.' : 'Patient contact details will appear here after patient registration.'
+                    : page > 1 ? 'Some directory pages may be empty when inactive patients are filtered.' : 'Patients will appear here only after an appointment is assigned to you.'}
                 icon="groups"
               />
             );
@@ -265,6 +284,16 @@ export default function PatientsList() {
           );
         })()}
       </section>
+      <nav className="flex flex-wrap items-center gap-3" aria-label="Patient directory pages">
+        <button type="button" className="portal-inline-action" disabled={page === 1 || isLoading} onClick={() => changePage(page - 1)}>Previous page</button>
+        <form onSubmit={(event) => { event.preventDefault(); changePage(Number(pageInput)); }} className="flex items-center gap-2">
+          <label htmlFor="patient-directory-page">Page</label>
+          <input id="patient-directory-page" type="number" min="1" max={MAX_CLINICAL_PAGE} value={pageInput} onChange={(event) => setPageInput(event.target.value)} className="w-20 rounded-lg border border-outline-variant px-2 py-1" />
+          <button type="submit" className="portal-inline-action">Go</button>
+        </form>
+        <span aria-live="polite">of at most {MAX_CLINICAL_PAGE} pages</span>
+        <button type="button" className="portal-inline-action" disabled={isLoading || page >= MAX_CLINICAL_PAGE} onClick={() => changePage(page + 1)}>Next page</button>
+      </nav>
     </div>
   );
 }

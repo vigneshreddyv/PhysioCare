@@ -159,19 +159,18 @@ def test_rejected_uri_does_not_appear_in_error():
     assert uri not in str(captured.value)
 
 
-def test_production_without_local_identity_keeps_existing_behavior():
-    configured = Settings(
-        _env_file=None,
-        **development_values(
-            ENVIRONMENT="production",
-            PHYSIOCARE_LOCAL_DEV=False,
-            MONGODB_URL="mongodb://production.example.invalid:27017/physiocare",
-            DATABASE_NAME="physiocare",
-            PAYMENT_RECONCILIATION_ENABLED=True,
-        ),
-    )
-    assert configured.ENVIRONMENT == "production"
-    configured.validate_runtime_startup()
+def test_production_without_dedicated_configuration_fails_closed():
+    with pytest.raises(ValidationError, match="Production"):
+        Settings(
+            _env_file=None,
+            **development_values(
+                ENVIRONMENT="production",
+                PHYSIOCARE_LOCAL_DEV=False,
+                MONGODB_URL="mongodb://production.example.invalid:27017/physiocare",
+                DATABASE_NAME="physiocare",
+                PAYMENT_RECONCILIATION_ENABLED=True,
+            ),
+        )
 
 
 def test_development_rejects_unsafe_working_directory_env_file(monkeypatch, tmp_path):

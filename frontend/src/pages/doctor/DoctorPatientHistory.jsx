@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../services/api';
+import { CLINICAL_PAGE_SIZE } from '../../services/clinicalPagination';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
 import EmptyState from '../../components/common/EmptyState';
 import { closePdfViewer, preparePdfViewer, showPdfBlob } from '../../utils/openPdfBlob';
 import ErrorState from '../../components/common/ErrorState';
@@ -47,40 +49,63 @@ function calculateRecordedAge(dateValue) {
   return age >= 0 && age <= 130 ? age : null;
 }
 
-function matchesFilter(appointment, filter) {
-  if (filter === 'active') return ['scheduled', 'in_progress'].includes(appointment.status);
-  if (filter === 'completed') return appointment.status === 'completed';
-  if (filter === 'closed') return ['cancelled', 'no_show'].includes(appointment.status);
-  return true;
-}
-
 export default function DoctorPatientHistory() {
   const { patientId } = useParams();
   const navigate = useNavigate();
   const [filter, setFilter] = useState('all');
+  const [page, setPage] = useState(1);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const activePatientRef = useRef(patientId);
+  const viewerRef = useRef(null);
+  useEffect(() => {
+    activePatientRef.current = patientId;
+    return () => {
+      activePatientRef.current = null;
+      if (viewerRef.current) closePdfViewer(viewerRef.current);
+      viewerRef.current = null;
+    };
+  }, [patientId]);
   const history = useQuery({
-    queryKey: ['doctorPatientHistory', patientId],
+    queryKey: ['doctorPatientHistory', patientId, filter, page, startDate, endDate],
     enabled: Boolean(patientId),
-    queryFn: async () => (await api.get(`/users/doctor/patients/${patientId}/history`)).data,
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const data = (await api.get(`/users/doctor/patients/${patientId}/history`, {
+        params: { page, page_size: CLINICAL_PAGE_SIZE, status_group: filter,
+          start_date: startDate || undefined, end_date: endDate || undefined },
+        signal,
+      })).data;
+      if (!data || !Array.isArray(data.appointments) || !Array.isArray(data.reports)
+        || data.appointments.length > CLINICAL_PAGE_SIZE || data.reports.length > CLINICAL_PAGE_SIZE) {
+        throw new Error('Invalid assigned patient history response');
+      }
+      return data;
+    },
   });
   const openReport = useMutation({
-    mutationFn: async ({ report, viewer }) => {
+    mutationFn: async ({ report, viewer, patientIdAtOpen }) => {
       if (!viewer) throw new Error('The PDF viewer was blocked.');
+      viewerRef.current = viewer;
       try {
         const response = await api.get(`/lab-requests/${report.request_id}/report-file`, { responseType: 'blob' });
+        if (activePatientRef.current !== patientIdAtOpen) {
+          closePdfViewer(viewer);
+          return;
+        }
         showPdfBlob(viewer, response.data);
       } catch (error) {
         closePdfViewer(viewer);
         throw error;
+      } finally {
+        if (viewerRef.current === viewer) viewerRef.current = null;
       }
     },
   });
 
   const appointments = history.data?.appointments || [];
-  const reports = [...(history.data?.reports || [])].sort(
-    (first, second) => Date.parse(second.report_released_at || 0) - Date.parse(first.report_released_at || 0),
-  );
-  const visibleAppointments = appointments.filter((appointment) => matchesFilter(appointment, filter));
+  const reports = history.data?.reports || [];
+  const visibleAppointments = appointments;
   const completedCount = appointments.filter((item) => item.status === 'completed').length;
   const activeCount = appointments.filter((item) => ['scheduled', 'in_progress'].includes(item.status)).length;
 
@@ -151,10 +176,10 @@ export default function DoctorPatientHistory() {
       </div>
 
       <section className="doctor-history__summary" aria-label="Patient history summary">
-        <div><strong>{appointments.length}</strong><span>Total visits</span></div>
-        <div><strong>{activeCount}</strong><span>Upcoming</span></div>
-        <div><strong>{completedCount}</strong><span>Completed</span></div>
-        <div><strong>{reports.length}</strong><span>Published reports</span></div>
+        <div><strong>{appointments.length}</strong><span>Visits on this page</span></div>
+        <div><strong>{activeCount}</strong><span>Upcoming on this page</span></div>
+        <div><strong>{completedCount}</strong><span>Completed on this page</span></div>
+        <div><strong>{reports.length}</strong><span>Published reports on this page</span></div>
       </section>
 
       <section className="portal-section-card doctor-history__section" aria-labelledby="doctor-visit-history-heading">
@@ -171,11 +196,15 @@ export default function DoctorPatientHistory() {
               type="button"
               key={item.key}
               aria-pressed={filter === item.key}
-              onClick={() => setFilter(item.key)}
+              onClick={() => { setFilter(item.key); setPage(1); }}
             >
               {item.label}
             </button>
           ))}
+        </div>
+        <div className="flex flex-wrap gap-3" aria-label="History date filters">
+          <label>From <input type="date" value={startDate} max={endDate || undefined} onChange={(event) => { setStartDate(event.target.value); setPage(1); }} /></label>
+          <label>Through <input type="date" value={endDate} min={startDate || undefined} onChange={(event) => { setEndDate(event.target.value); setPage(1); }} /></label>
         </div>
         {!visibleAppointments.length ? (
           <EmptyState title="No visits in this view" message="Choose another history filter." icon="event_note" />
@@ -249,7 +278,7 @@ export default function DoctorPatientHistory() {
                 <button
                   type="button"
                   disabled={openReport.isPending}
-                  onClick={() => openReport.mutate({ report, viewer: preparePdfViewer() })}
+                  onClick={() => openReport.mutate({ report, viewer: preparePdfViewer(), patientIdAtOpen: patientId })}
                 >
                   {openReport.isPending && openReport.variables?.report?.request_id === report.request_id ? 'Opening…' : 'Open PDF'}
                 </button>
@@ -258,6 +287,9 @@ export default function DoctorPatientHistory() {
           </div>
         )}
       </section>
+      <ClinicalPageNav label="Doctor patient history" page={page} onPageChange={setPage}
+        isLoading={history.isFetching} itemCount={appointments.length + reports.length}
+        hasNext={appointments.length === CLINICAL_PAGE_SIZE || reports.length === CLINICAL_PAGE_SIZE} />
     </div>
   );
 }

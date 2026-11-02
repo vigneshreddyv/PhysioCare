@@ -10,3 +10,8 @@ async def get_stats(
     current_user = Depends(RoleChecker(["admin"]))
 ):
     return await AnalyticsService.get_clinic_stats(days=days)
+
+
+@router.get("/admin-daily-activity")
+async def get_admin_daily_activity(current_user=Depends(RoleChecker(["admin"]))):
+    return await AnalyticsService.get_admin_daily_activity()

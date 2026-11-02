@@ -4,6 +4,7 @@ from beanie import PydanticObjectId
 from fastapi import HTTPException
 from app.models.exercise import Exercise, ExerciseAssignment
 from app.services.exercise_service import ExerciseService
+from app.repositories.exercise_repository import ExerciseRepository
 from app.api.exercises import (
     get_assignment,
     get_patient_stats_for_clinician,
@@ -15,6 +16,19 @@ def mock_exercise_insert_globally():
     with patch("app.models.exercise.Exercise.insert", new_callable=AsyncMock) as mock_ins, \
          patch("app.models.exercise.ExerciseAssignment.insert", new_callable=AsyncMock) as mock_assign_ins:
         yield mock_ins, mock_assign_ins
+
+
+@pytest.fixture(autouse=True)
+def mock_assignment_revision_repository():
+    async def apply_update(assignment_id, **kwargs):
+        assignment = await ExerciseRepository.get_assignment_by_id(assignment_id)
+        for field, value in kwargs["set_fields"].items():
+            setattr(assignment, field, value)
+        assignment.revision = kwargs["expected_revision"] + 1
+        return assignment
+
+    with patch.object(ExerciseRepository, "update_assignment_if_revision", side_effect=apply_update):
+        yield
 
 
 @pytest.mark.asyncio

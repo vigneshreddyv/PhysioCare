@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -13,53 +14,60 @@ import {
   ClipboardCheck,
 } from '../../components/common/LucideCompat';
 import Button from '../../components/common/Button';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 const categories = ['All', 'Mobility', 'Strength', 'Stretching', 'Posture'];
+const EMPTY = [];
 
 export default function PatientExercises() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [assignmentPage, setAssignmentPage] = useState(1);
   const [detailExercise, setDetailExercise] = useState(null);
+  useEffect(() => { setCatalogPage(1); setAssignmentPage(1); setDetailExercise(null); }, [user?.id]);
+  const categoryParam = selectedCategory === 'All' ? '' : `?category=${selectedCategory.toLowerCase()}`;
 
   // 1. Fetch general exercise catalog
   const { 
-    data: catalogExercises, 
+    data: catalogPageData,
     isLoading: isCatalogLoading, 
     error: catalogError,
     refetch: refetchCatalog
   } = useQuery({
-    queryKey: ['catalogExercises'],
-    queryFn: async () => {
-      const response = await api.get('/exercises');
-      return response.data;
-    },
+    queryKey: ['catalogExercises', user?.id, selectedCategory, catalogPage],
+    queryFn: () => fetchClinicalPage(`/exercises${categoryParam}`, catalogPage),
+    gcTime: 0,
     retry: 1
   });
 
   // 2. Fetch patient's prescribed exercise assignments
   const { 
-    data: assignments, 
+    data: assignmentPageData,
     isLoading: isAssignmentsLoading, 
     error: assignmentsError,
     refetch: refetchAssignments
   } = useQuery({
-    queryKey: ['exerciseAssignments'],
-    queryFn: async () => {
-      const response = await api.get('/exercise-assignments');
-      return response.data;
-    },
+    queryKey: ['exerciseAssignments', user?.id, selectedCategory, assignmentPage],
+    queryFn: () => fetchClinicalPage(`/exercise-assignments/me/details${categoryParam}`, assignmentPage),
+    gcTime: 0,
     retry: 1
   });
 
   // 3. Fetch weekly stats (to obtain recent activity feed)
-  const { data: stats } = useQuery({
-    queryKey: ['patient-exercises-stats'],
+  const { data: stats, refetch: refetchStats } = useQuery({
+    queryKey: ['patient-exercises-stats', user?.id],
     queryFn: async () => {
       const response = await api.get('/exercise-progress/stats');
       return response.data;
     },
     retry: 1
   });
+
+  const catalogExercises = catalogPageData?.data || EMPTY;
+  const assignments = assignmentPageData?.data || EMPTY;
 
   // 4. React Query Mutation to log exercise completion progress
   const logProgressMutation = useMutation({
@@ -70,35 +78,38 @@ export default function PatientExercises() {
     onSuccess: () => {
       refetchAssignments();
       refetchCatalog();
-    }
+      refetchStats();
+    },
+    onError: (err) => {
+      if (err.response?.status === 409) {
+        refetchAssignments();
+      }
+    },
   });
 
   // Map prescribed assignments to UI properties
   const prescribedExercises = useMemo(() => {
-    if (!catalogExercises || !assignments) return [];
     return assignments.map(assign => {
-      const ex = catalogExercises.find(e => String(e.id) === String(assign.exercise_id));
-      if (!ex) return null;
       return {
         id: assign.id,
-        exercise_id: ex.id,
-        name: ex.title,
-        category: ex.category.charAt(0).toUpperCase() + ex.category.slice(1),
+        exercise_id: assign.exercise_id,
+        name: assign.title,
+        category: assign.category.charAt(0).toUpperCase() + assign.category.slice(1),
         sets: `${assign.sets} sets`,
         reps: `${assign.reps} reps`,
         duration: `${Math.round(assign.duration_seconds / 60)} min`,
-        description: ex.description,
-        instructions: ex.instructions,
-        safetyReminders: ex.safety_precautions || [],
+        description: assign.description,
+        instructions: assign.instructions,
+        safetyReminders: assign.safety_precautions || [],
         status: assign.status,
+        revision: assign.revision || 0,
         is_assigned: true
       };
-    }).filter(Boolean);
-  }, [catalogExercises, assignments]);
+    });
+  }, [assignments]);
 
   // Map catalog exercises to UI properties
   const generalExercises = useMemo(() => {
-    if (!catalogExercises) return [];
     return catalogExercises.map(ex => {
       return {
         id: ex.id,
@@ -136,6 +147,7 @@ export default function PatientExercises() {
 
     logProgressMutation.mutate({
       assignment_id: ex.id,
+      expected_assignment_revision: ex.revision,
       completed_sets: numericSets,
       completed_reps: numericReps,
       duration_seconds: numericDurationSeconds,
@@ -143,24 +155,12 @@ export default function PatientExercises() {
     });
   };
 
-  const completedCount = useMemo(() => {
-    return prescribedExercises.filter((e) => e.status === 'completed').length;
-  }, [prescribedExercises]);
+  const completedCount = stats?.completed;
+  const totalAssigned = stats?.total;
+  const progressPercent = stats?.percentage;
 
-  const progressPercent = useMemo(() => {
-    if (prescribedExercises.length === 0) return 0;
-    return Math.round((completedCount / prescribedExercises.length) * 100);
-  }, [completedCount, prescribedExercises.length]);
-
-  const filteredPrescribed = useMemo(() => {
-    if (selectedCategory === 'All') return prescribedExercises;
-    return prescribedExercises.filter((e) => e.category.toLowerCase() === selectedCategory.toLowerCase());
-  }, [prescribedExercises, selectedCategory]);
-
-  const filteredGeneral = useMemo(() => {
-    if (selectedCategory === 'All') return generalExercises;
-    return generalExercises.filter((e) => e.category.toLowerCase() === selectedCategory.toLowerCase());
-  }, [generalExercises, selectedCategory]);
+  const filteredPrescribed = prescribedExercises;
+  const filteredGeneral = generalExercises;
 
   // Loading skeleton matching layout
   if (isCatalogLoading || isAssignmentsLoading) {
@@ -223,15 +223,15 @@ export default function PatientExercises() {
         <div className="lg:col-span-2 space-y-8">
           
           {/* TODAY'S EXERCISE SUMMARY */}
-          {prescribedExercises.length > 0 && (
+          {totalAssigned > 0 && (
             <section className="bg-white border border-[#E5E0D6] rounded-3xl p-6 sm:p-8 space-y-6 shadow-sm">
               <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 pb-4 border-b border-[#E5E0D6]/60">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-[#60716E] uppercase tracking-wider">Today's Tasks</span>
-                  <h2 className="text-xl font-extrabold text-[#183B4A]">Daily Routine Completion</h2>
+                  <span className="text-[10px] font-bold text-[#60716E] uppercase tracking-wider">Assigned routines</span>
+                  <h2 className="text-xl font-extrabold text-[#183B4A]">Assignment Completion</h2>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-xs font-bold text-[#183B4A]">{completedCount} of {prescribedExercises.length} completed</span>
+                  <span className="text-xs font-bold text-[#183B4A]">{completedCount} of {totalAssigned} completed</span>
                   <span className="text-xs font-bold text-[#0F6B63] bg-[#EEF5F1] px-3.5 py-1 rounded-full border border-[#0F6B63]/10">{progressPercent}% done</span>
                 </div>
               </div>
@@ -244,7 +244,7 @@ export default function PatientExercises() {
                   />
                 </div>
                 
-                {/* Checklist overview */}
+                {/* Current page overview */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                   {prescribedExercises.map((ex) => (
                     <div key={ex.id} className="flex items-center gap-2.5 text-xs sm:text-sm text-[#60716E]">
@@ -275,7 +275,7 @@ export default function PatientExercises() {
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setSelectedCategory(cat)}
+                    onClick={() => { setSelectedCategory(cat); setCatalogPage(1); setAssignmentPage(1); setDetailExercise(null); }}
                     className={`px-4.5 py-2 rounded-full text-xs font-bold transition-all border shrink-0 focus:outline-none ${
                       isSelected
                         ? 'bg-[#0F6B63] border-[#0F6B63] text-white shadow-sm'
@@ -354,7 +354,7 @@ export default function PatientExercises() {
                         ) : (
                           <button
                             onClick={() => toggleCompletion(ex)}
-                            disabled={logProgressMutation.isPending}
+                            disabled={logProgressMutation.isPending || ex.status === 'cancelled'}
                             className={`text-xs font-bold py-1.5 px-3 border.5 transition duration-150 rounded-xl flex items-center gap-1 ${
                               isInProgress 
                                 ? 'bg-[#F7F4ED] border-[#C9A86A] text-[#C9A86A] hover:bg-[#F7F4ED]/80' 
@@ -371,6 +371,7 @@ export default function PatientExercises() {
                 })}
               </div>
             )}
+            {assignmentPageData && <ClinicalPageNav label="Prescribed exercises" page={assignmentPage} onPageChange={(next) => { setDetailExercise(null); setAssignmentPage(next); }} isLoading={isAssignmentsLoading} itemCount={prescribedExercises.length} hasNext={assignmentPageData.hasNext} />}
           </section>
 
           {/* GENERAL EXERCISES REFERENCE */}
@@ -425,6 +426,7 @@ export default function PatientExercises() {
                 ))}
               </div>
             )}
+            {catalogPageData && <ClinicalPageNav label="Reference exercises" page={catalogPage} onPageChange={(next) => { setDetailExercise(null); setCatalogPage(next); }} isLoading={isCatalogLoading} itemCount={generalExercises.length} hasNext={catalogPageData.hasNext} />}
           </section>
 
         </div>

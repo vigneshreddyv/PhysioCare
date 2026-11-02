@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import { fetchClinicalPage } from '../../services/clinicalPagination';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../services/api';
@@ -15,15 +16,19 @@ import {
   Calendar,
 } from '../../components/common/LucideCompat';
 import Button from '../../components/common/Button';
+import ClinicalPageNav from '../../components/common/ClinicalPageNav';
+import { useAuth } from '../../context/useAuth';
 
 export default function PatientCarePlan() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [historyPageNumber, setHistoryPageNumber] = useState(1);
 
   // 1. Fetch care plans from the backend
   const { data: carePlans, isLoading, error } = useQuery({
     queryKey: ['carePlans'],
     queryFn: async () => {
-      const response = await api.get('/care-plans');
+      const response = await api.get('/care-plans', { params: { selection: 'active_latest' } });
       return response.data;
     },
     retry: 1
@@ -41,28 +46,26 @@ export default function PatientCarePlan() {
 
   // 3. Fetch patient-safe clinical log history
   const carePlanId = carePlan?.id;
+  useEffect(() => setHistoryPageNumber(1), [carePlanId, user?.id]);
   const {
-    data: historyLogs,
+    data: historyPage,
     isLoading: isHistoryLoading,
     error: historyError
   } = useQuery({
-    queryKey: ['carePlanHistory', carePlanId],
-    queryFn: async () => {
-      const response = await api.get(`/care-plans/${carePlanId}/history`);
-      return response.data;
-    },
+    queryKey: ['carePlanHistory', user?.id, carePlanId, historyPageNumber],
+    queryFn: () => fetchClinicalPage(`/care-plans/${carePlanId}/history`, historyPageNumber),
     enabled: !!carePlanId,
+    gcTime: 0,
     retry: 1
   });
+  const historyLogs = historyPage?.data;
 
-  // Fetch exercises assignments linked to the care plan
-  const { data: stageExercises } = useQuery({
-    queryKey: ['carePlanExercises', carePlanId],
-    queryFn: async () => {
-      const response = await api.get(`/care-plans/${carePlanId}/exercises`);
-      return response.data;
-    },
+  // Stage totals are computed on the server across the whole authorized care plan.
+  const { data: stageSummary, isError: stageSummaryError, refetch: refetchStageSummary } = useQuery({
+    queryKey: ['carePlanExerciseSummary', user?.id, carePlanId],
+    queryFn: async () => (await api.get(`/care-plans/${carePlanId}/exercise-summary`)).data,
     enabled: !!carePlanId,
+    gcTime: 0,
     retry: 1
   });
 
@@ -289,6 +292,7 @@ export default function PatientCarePlan() {
               <span className="text-[10px] font-bold uppercase tracking-wider text-[#60716E]">Roadmap</span>
               <h3 className="font-extrabold text-[#183B4A] text-xl mt-0.5">Rehabilitation Pathway Stages</h3>
             </div>
+            {stageSummaryError && <p role="alert">Exercise totals are unavailable. <button type="button" onClick={() => refetchStageSummary()}>Try again</button></p>}
 
             {!carePlan.stages || carePlan.stages.length === 0 ? (
               <p className="text-sm text-[#60716E] py-4 text-center">Treatment stages have not been configured yet.</p>
@@ -307,8 +311,9 @@ export default function PatientCarePlan() {
                     dateText = `Est. start ${new Date(stage.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
                   }
 
-                  const countStagePrescribed = stageExercises ? stageExercises.filter(e => e.stage_id === stage.stage_id).length : 0;
-                  const countStageCompleted = stageExercises ? stageExercises.filter(e => e.stage_id === stage.stage_id && e.status === 'completed').length : 0;
+                  const stageCounts = stageSummary?.find((item) => item.stage_id === stage.stage_id);
+                  const countStagePrescribed = stageCounts?.prescribed || 0;
+                  const countStageCompleted = stageCounts?.completed || 0;
 
                   return (
                     <div key={stage.stage_id || index} className="relative group">
@@ -362,7 +367,7 @@ export default function PatientCarePlan() {
                           <div className="mt-4 text-xs text-[#60716E] flex items-center gap-2 pt-3 border-t border-[#E5E0D6]/30">
                             <Dumbbell className="w-4 h-4 text-[#0F6B63]" />
                             <span>
-                              Prescribed Exercises: <strong className="text-[#183B4A]">{countStagePrescribed}</strong> | Completed today: <strong className="text-[#183B4A]">{countStageCompleted}</strong>
+                              Prescribed Exercises: <strong className="text-[#183B4A]">{countStagePrescribed}</strong> | Completed assignments: <strong className="text-[#183B4A]">{countStageCompleted}</strong>
                             </span>
                           </div>
                         )}
@@ -412,6 +417,7 @@ export default function PatientCarePlan() {
                 ))}
               </div>
             )}
+            {historyPage && <ClinicalPageNav label="Care plan history" page={historyPageNumber} onPageChange={setHistoryPageNumber} isLoading={isHistoryLoading} itemCount={historyLogs.length} hasNext={historyPage.hasNext} />}
           </section>
         </div>
 

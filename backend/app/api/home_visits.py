@@ -1,11 +1,13 @@
 from datetime import date
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.middleware.auth import RoleChecker
 from app.models.user import User
 from app.schemas.home_visit import (
     AdminDemoEntitlementOut,
+    AdminHomeVisitBookingOut,
     DemoEntitlementOut,
     DemoEntitlementUpdate,
     DoctorHomeVisitRequestOut,
@@ -18,6 +20,8 @@ from app.schemas.home_visit import (
 )
 from app.schemas.appointment import AppointmentAvailabilityOut, AppointmentOut
 from app.services.home_visit_service import HomeVisitService
+from app.services.appointment_service import AppointmentService
+from app.core.pagination import DEFAULT_PAGE_SIZE, page_window
 
 
 router = APIRouter(tags=["demo services and home visits"])
@@ -40,8 +44,22 @@ async def get_own_demo_entitlement(
 @router.get("/demo-services/entitlements", response_model=list[AdminDemoEntitlementOut])
 async def list_demo_entitlements(
     current_user: User = Depends(RoleChecker(["admin"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    search: str | None = Query(default=None, max_length=100),
 ):
-    return await HomeVisitService.list_admin_entitlements()
+    return await HomeVisitService.search_admin_entitlements(
+        page_window(page, page_size), (search or "").strip(),
+    )
+
+
+@router.get("/home-visit-bookings/admin/scheduled", response_model=list[AdminHomeVisitBookingOut])
+async def list_scheduled_home_visits(
+    current_user: User = Depends(RoleChecker(["admin"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+):
+    return await AppointmentService.list_scheduled_home_visits(page_window(page, page_size))
 
 
 @router.put("/demo-services/patients/{patient_id}/entitlement", response_model=AdminDemoEntitlementOut)
@@ -104,8 +122,16 @@ async def assign_home_visit_doctor(
 @router.get("/home-visit-requests/me", response_model=list[HomeVisitRequestOut])
 async def list_own_home_visit_requests(
     current_user: User = Depends(RoleChecker(["patient"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    order: Literal["created", "updated"] = "created",
 ):
-    return await HomeVisitService.list_patient_requests(str(current_user.id))
+    window = page_window(page, page_size)
+    if order == "updated":
+        return await HomeVisitService.list_patient_requests(
+            str(current_user.id), window, recent_updates=True,
+        )
+    return await HomeVisitService.list_patient_requests(str(current_user.id), window)
 
 
 @router.post("/home-visit-requests/{request_id}/withdraw", response_model=HomeVisitRequestOut)
@@ -119,8 +145,10 @@ async def withdraw_home_visit_request(
 @router.get("/home-visit-requests/admin", response_model=list[HomeVisitRequestOut])
 async def list_admin_home_visit_requests(
     current_user: User = Depends(RoleChecker(["admin"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await HomeVisitService.list_admin_requests()
+    return await HomeVisitService.list_admin_requests(page_window(page, page_size))
 
 
 @router.patch("/home-visit-requests/admin/{request_id}", response_model=HomeVisitRequestOut)
@@ -139,12 +167,18 @@ async def review_home_visit_request(
 @router.get("/home-visit-requests/reception", response_model=list[ReceptionHomeVisitRequestOut])
 async def list_reception_home_visit_requests(
     current_user: User = Depends(RoleChecker(["receptionist"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await HomeVisitService.list_reception_requests()
+    return await HomeVisitService.list_reception_requests(page_window(page, page_size))
 
 
 @router.get("/home-visit-requests/doctor", response_model=list[DoctorHomeVisitRequestOut])
 async def list_doctor_home_visit_requests(
     current_user: User = Depends(RoleChecker(["doctor"])),
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ):
-    return await HomeVisitService.list_doctor_requests(str(current_user.id))
+    return await HomeVisitService.list_doctor_requests(
+        str(current_user.id), page_window(page, page_size),
+    )
